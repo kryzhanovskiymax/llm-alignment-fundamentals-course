@@ -1,0 +1,2066 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage[margin=1in]{geometry}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\argmax}{\operatorname*{arg\,max}}
+\newcommand{\KL}{\operatorname{KL}}
+\usepackage{amsmath}
+\DeclareMathOperator{\Var}{\widehat{Var}}
+
+\begin{document}
+
+\begin{center}
+{\LARGE RL Foundations for LLM Alignment (Draft)}\\[2mm]
+{}
+\end{center}
+
+\tableofcontents
+\newtheorem{example}{Example}[section]
+\newtheorem{remark}{Remark}[section]
+
+% ============================================================
+\section{Important Concepts}
+
+\subsection{Probability model and basic notation}
+
+Let $(\Omega,\mathcal{F},\mathbb{P})$ be a probability space on which all random variables are defined.
+We write $x\sim p$ to mean that $x$ is sampled from a distribution $p$.
+
+\begin{itemize}
+  \item $\mathcal{S}$: state space.
+  \item $\mathcal{A}$: action space.
+  \item $\Delta(\mathcal{X})$: set of probability measures on a measurable space $\mathcal{X}$.
+\end{itemize}
+
+Throughout this book, the reward is a deterministic function
+\begin{equation}
+r:\mathcal{S}\times\mathcal{A}\to\R.
+\end{equation}
+
+We will later define an MDP formally as $(\mathcal{S},\mathcal{A},P,r,\rho_0,\gamma)$, where
+\begin{itemize}
+  \item $\rho_0\in\Delta(\mathcal{S})$ is the initial-state distribution,
+  \item $P(\cdot\mid s,a)\in\Delta(\mathcal{S})$ is the transition kernel,
+  \item $\gamma\in[0,1)$ is the discount factor,
+  \item $\pi(\cdot\mid s)\in\Delta(\mathcal{A})$ is a policy.
+\end{itemize}
+
+\begin{example}[Discrete expectation as a weighted average]
+Let $\mathcal{X}=\{1,2,3\}$ and $p(1)=0.2$, $p(2)=0.5$, $p(3)=0.3$. If $f(x)=x^2$, then
+\[
+\E_{x\sim p}[f(x)]
+=
+0.2\cdot 1^2 + 0.5\cdot 2^2 + 0.3\cdot 3^2
+=
+0.2 + 2.0 + 2.7
+= 4.9.
+\]
+This ``sum of values weighted by probabilities'' view will reappear in RL as weighted averages over states/actions.
+\end{example}
+
+\begin{example}[Continuous expectation]
+If $x\sim\mathcal{N}(0,1)$ and $f(x)=x^2$, then $\E[f(x)]=\mathrm{Var}(x)+(\E[x])^2=1$.
+Here the expectation is an integral $\int x^2 \,\phi(x)\,dx$, but the meaning is the same: average of $f(x)$ under $p(x)$.
+\end{example}
+
+\subsection{Monte-Carlo estimation}
+
+Let $x\sim p$ and let $f$ be $p$-integrable. Define
+\begin{equation}
+\mu := \E_{x\sim p}[f(x)].
+\end{equation}
+Given i.i.d.\ samples $x^{(1)},\dots,x^{(N)}\overset{i.i.d.}{\sim}p$, the Monte-Carlo estimator is
+\begin{equation}
+\widehat{\mu}_{\mathrm{MC}} := \frac{1}{N}\sum_{i=1}^N f\!\left(x^{(i)}\right),
+\qquad x^{(i)}\sim p.
+\end{equation}
+
+\begin{remark}[Why Monte-Carlo works]
+Under mild conditions, $\widehat{\mu}_{\mathrm{MC}}\to \mu$ as $N\to\infty$ (law of large numbers).
+Moreover, the typical estimation error scales like $O(1/\sqrt{N})$ (central limit theorem intuition).
+\end{remark}
+
+\begin{example}[Estimating a probability]
+Let $x\sim\mathrm{Bernoulli}(p)$, so $x\in\{0,1\}$ and $\E[x]=p$.
+With samples $x^{(1:N)}$, the estimator
+\[
+\widehat{p}=\frac{1}{N}\sum_{i=1}^N x^{(i)}
+\]
+is exactly Monte-Carlo with $f(x)=x$.
+\end{example}
+
+\begin{example}[Monte-Carlo in RL: estimating return]
+Suppose a policy rollout produces rewards $(r_0,r_1,r_2)$ and then terminates, with $\gamma=0.9$.
+The (sample) return is
+\[
+\widehat{G}_0 = r_0 + 0.9\,r_1 + 0.9^2 r_2.
+\]
+If we repeat rollouts $\tau^{(1)},\dots,\tau^{(N)}$ and compute $\widehat{G}_0^{(i)}$ for each,
+then
+\[
+\widehat{J}_{\mathrm{MC}}(\pi) := \frac{1}{N}\sum_{i=1}^N \widehat{G}_0^{(i)}
+\]
+is a Monte-Carlo estimator of $J(\pi)=\E_{\tau\sim p_\pi}[G_0(\tau)]$.
+\end{example}
+
+\subsection{Importance Sampling (IS)}
+
+Let $p$ be a target distribution and $q$ a proposal distribution such that $p\ll q$ (absolute continuity).
+Then for integrable $f$,
+\begin{equation}
+\E_{x\sim p}[f(x)]
+=
+\E_{x\sim q}\!\left[\frac{p(x)}{q(x)}\,f(x)\right].
+\end{equation}
+Define the importance weight $w(x):=\frac{p(x)}{q(x)}$. Given i.i.d.\ samples $x^{(1)},\dots,x^{(N)}\overset{i.i.d.}{\sim}q$,
+\begin{equation}
+\widehat{\mu}_{\mathrm{IS}}
+:=
+\frac{1}{N}\sum_{i=1}^N w\!\left(x^{(i)}\right)f\!\left(x^{(i)}\right),
+\qquad x^{(i)}\sim q.
+\end{equation}
+
+\begin{remark}[Support mismatch is fatal]
+If there exists $x$ with $p(x)>0$ but $q(x)=0$, then $w(x)$ is undefined/infinite and IS cannot correct the mismatch.
+In RL language: you cannot evaluate a new policy on actions that the behavior policy never takes.
+\end{remark}
+
+\begin{example}[A tiny discrete IS calculation]
+Let $\mathcal{X}=\{a,b\}$.
+Target $p(a)=0.8$, $p(b)=0.2$; proposal $q(a)=0.5$, $q(b)=0.5$.
+Let $f(a)=1$, $f(b)=3$.
+Then $\mu=\E_p[f]=0.8\cdot 1+0.2\cdot 3=1.4$.
+If we sample from $q$, IS uses weights
+\[
+w(a)=\frac{0.8}{0.5}=1.6,\qquad w(b)=\frac{0.2}{0.5}=0.4.
+\]
+So $w(x)f(x)$ equals $1.6$ when $x=a$ and $1.2$ when $x=b$.
+Averaging these over samples from $q$ recovers $1.4$ in expectation.
+\end{example}
+
+\begin{example}[Off-policy evaluation in a contextual bandit (single-step RL)]
+A context $s\sim d(s)$ is drawn, then one action $a$ is chosen, reward $r(s,a)$ is observed, and the episode ends.
+Let the \emph{target} policy be $\pi'(a\mid s)$ and the \emph{behavior} policy be $\pi(a\mid s)$.
+The target value is
+\[
+J(\pi')=\E_{s\sim d}\E_{a\sim\pi'(\cdot\mid s)}[r(s,a)].
+\]
+If data is collected under $\pi$, then action-wise IS gives
+\[
+J(\pi')
+=
+\E_{s\sim d}\E_{a\sim\pi(\cdot\mid s)}\!\left[\frac{\pi'(a\mid s)}{\pi(a\mid s)}\,r(s,a)\right].
+\]
+With samples $(s^{(i)},a^{(i)},r^{(i)})$ from $\pi$, an unbiased estimator is
+\[
+\widehat{J}_{\mathrm{IS}}(\pi')
+=\frac{1}{N}\sum_{i=1}^N \frac{\pi'(a^{(i)}\mid s^{(i)})}{\pi(a^{(i)}\mid s^{(i)})}\,r^{(i)}.
+\]
+This is the basic ``off-policy correction'' idea used throughout modern policy optimization.
+\end{example}
+
+\begin{remark}[Practical trick: self-normalized IS]
+When $w(x)$ has high variance, a common stabilization is the self-normalized estimator
+\[
+\widehat{\mu}_{\mathrm{SNIS}}
+=
+\frac{\sum_{i=1}^N w(x^{(i)})f(x^{(i)})}{\sum_{i=1}^N w(x^{(i)})}.
+\]
+It is biased in finite samples but often lower-variance in practice.
+Clipping or capping weights is another common variance-control trick (also biased).
+\end{remark}
+
+\subsection{Log-derivative trick (score-function identity)}
+\label{sec:log_derivative}
+
+This is a general mathematical identity independent of reinforcement learning.
+
+Let $p_\theta(x)$ be a probability density (or mass function) parameterized by $\theta\in\R^d$.
+Let $f$ be integrable under $p_\theta$. Define
+\begin{equation}
+F(\theta):=\E_{x\sim p_\theta}[f(x)].
+\end{equation}
+Assume we may interchange differentiation and integration. Then
+\begin{equation}
+\nabla_\theta F(\theta)
+=
+\E_{x\sim p_\theta}\!\big[f(x)\,\nabla_\theta\log p_\theta(x)\big].
+\end{equation}
+
+\begin{example}[Bernoulli example: see the gradient explicitly]
+Let $x\in\{0,1\}$ with $p_\theta(x)=\theta^x(1-\theta)^{1-x}$ for $\theta\in(0,1)$.
+Then
+\[
+\log p_\theta(x)=x\log\theta+(1-x)\log(1-\theta),
+\qquad
+\frac{\partial}{\partial\theta}\log p_\theta(x)=\frac{x}{\theta}-\frac{1-x}{1-\theta}.
+\]
+For any $f(x)$,
+\[
+\frac{d}{d\theta}\E[f(x)]
+=
+\E\!\left[f(x)\left(\frac{x}{\theta}-\frac{1-x}{1-\theta}\right)\right].
+\]
+This is the simplest ``REINFORCE-style'' gradient form.
+\end{example}
+
+\begin{example}[Softmax policy: the score is simple]
+Let a discrete policy be
+\[
+\pi_\theta(a\mid s)=\frac{\exp(\theta^\top \varphi(s,a))}{\sum_{a'}\exp(\theta^\top \varphi(s,a'))},
+\]
+where $\varphi(s,a)\in\R^d$ are features.
+Then
+\[
+\nabla_\theta \log \pi_\theta(a\mid s)
+=
+\varphi(s,a) - \E_{a'\sim\pi_\theta(\cdot\mid s)}[\varphi(s,a')].
+\]
+So policy-gradient methods often reduce to ``(chosen features) minus (expected features)'' weighted by an advantage signal.
+\end{example}
+
+\begin{remark}[One more trick: baselines are free]
+If $b$ does not depend on the sampled variable (e.g.\ $b=b(s)$ in RL), then
+\[
+\E_{x\sim p_\theta}\!\big[b\,\nabla_\theta\log p_\theta(x)\big]=b\,\nabla_\theta \int p_\theta(x)\,dx = 0.
+\]
+Therefore you can replace $f(x)$ by $f(x)-b$ inside the expectation without changing the gradient,
+often reducing variance. (We will use this constantly in policy gradients.)
+\end{remark}
+
+\subsection{Temporal-Difference (TD) idea}
+
+Let $V:\mathcal{S}\to\R$ be a value-function approximator. Consider one transition generated by some policy $\pi$ and kernel $P$:
+\begin{equation}
+s_t \sim d_t^\pi,\qquad a_t \sim \pi(\cdot\mid s_t),\qquad s_{t+1}\sim P(\cdot\mid s_t,a_t).
+\end{equation}
+Define the TD(0) target and TD error:
+\begin{equation}
+y_t := r(s_t,a_t)+\gamma V(s_{t+1}),
+\qquad
+\delta_t := y_t - V(s_t)=r(s_t,a_t)+\gamma V(s_{t+1})-V(s_t).
+\end{equation}
+
+\begin{example}[Two-state TD update by hand]
+Let $\mathcal{S}=\{A,B\}$ and suppose the observed transition is $s_t=A \to s_{t+1}=B$ with reward $r=1$ and $\gamma=0.9$.
+Assume current estimates $V(A)=0.2$ and $V(B)=0.7$.
+Then
+\[
+y_t = 1 + 0.9\cdot 0.7 = 1.63,
+\qquad
+\delta_t = 1.63 - 0.2 = 1.43.
+\]
+A TD(0) update with stepsize $\eta$ is
+\[
+V(A)\leftarrow V(A)+\eta\,\delta_t.
+\]
+For example, if $\eta=0.1$, then $V(A)\leftarrow 0.2+0.1\cdot 1.43=0.343$.
+\end{example}
+
+\begin{remark}[Why TD is powerful]
+Monte-Carlo targets use full returns, which can have high variance.
+TD uses \emph{bootstrapping} ($V(s_{t+1})$) to reduce variance and to learn from partial trajectories.
+The trade-off is bias: if $V(s_{t+1})$ is wrong, the TD target is biased. Many RL methods (e.g.\ actor--critic, GAE)
+interpolate between MC and TD to control this bias--variance trade-off.
+\end{remark}
+
+\section{Reinforcement Learning Fundamentals}
+
+\subsection{MDP problem setup}
+\label{sec:mdp_setup}
+
+An infinite-horizon discounted Markov Decision Process (MDP) is a tuple
+\begin{equation}
+\mathcal{M}:=(\mathcal{S},\mathcal{A},P,r,\rho_0,\gamma),
+\end{equation}
+where $\mathcal{S}$ is the state space, $\mathcal{A}$ is the action space,
+$\rho_0\in\Delta(\mathcal{S})$ is the initial-state distribution,
+$P(\cdot\mid s,a)\in\Delta(\mathcal{S})$ is the transition kernel,
+$\gamma\in[0,1)$ is the discount factor, and
+\begin{equation}
+r:\mathcal{S}\times\mathcal{A}\to\R
+\end{equation}
+is the reward function (book-wide convention).
+
+\paragraph{Policy.}
+A (stationary Markov) policy is a conditional distribution over actions given states:
+\begin{equation}
+\pi(\cdot\mid s)\in\Delta(\mathcal{A})\quad \text{for each } s\in\mathcal{S}.
+\end{equation}
+We use lowercase letters to denote sampled random variables, e.g.
+\begin{equation}
+a\sim\pi(\cdot\mid s).
+\end{equation}
+
+\paragraph{Trajectory and trajectory distribution.}
+Given $(\rho_0,P,\pi)$, define the stochastic process $(s_t,a_t)_{t\ge 0}$ by
+\begin{equation}
+s_0\sim\rho_0,\qquad a_t\sim\pi(\cdot\mid s_t),\qquad s_{t+1}\sim P(\cdot\mid s_t,a_t).
+\end{equation}
+A trajectory is
+\begin{equation}
+\tau := (s_0,a_0,s_1,a_1,s_2,a_2,\dots)\in (\mathcal{S}\times\mathcal{A})^{\N}.
+\end{equation}
+We denote by $p_\pi$ the probability measure on trajectories induced by the generative process above.
+Expectations over rollouts always specify this distribution, e.g. $\E_{\tau\sim p_\pi}[\cdot]$.
+
+\paragraph{Return and optimization objective.}
+Define the discounted reward-to-go from time $t$:
+\begin{equation}
+G_t(\tau):=\sum_{k=0}^{\infty}\gamma^k\,r(s_{t+k},a_{t+k}).
+\end{equation}
+Define the performance objective:
+\begin{equation}
+J(\pi):=\E_{\tau\sim p_\pi}\big[G_0(\tau)\big]
+=
+\E_{\tau\sim p_\pi}\left[\sum_{t=0}^{\infty}\gamma^t r(s_t,a_t)\right].
+\end{equation}
+The reinforcement learning problem is to find an optimal policy
+\begin{equation}
+\pi^\star \in \argmax_{\pi} J(\pi).
+\end{equation}
+
+\subsection{Important constructions}
+
+\paragraph{Discounted occupancy measures.}
+Define the discounted state-occupancy distribution
+\begin{equation}
+d_\pi(s):=(1-\gamma)\sum_{t=0}^{\infty}\gamma^t\,\mathbb{P}(s_t=s\mid \pi),
+\end{equation}
+and the discounted state-action occupancy distribution
+\begin{equation}
+d_\pi(s,a):=(1-\gamma)\sum_{t=0}^{\infty}\gamma^t\,\mathbb{P}(s_t=s,a_t=a\mid \pi)=d_\pi(s)\,\pi(a\mid s).
+\end{equation}
+When we write $(s,a)\sim d_\pi$, we mean the pair is sampled from this discounted occupancy distribution.
+
+\subsection{Value functions}
+
+\subsubsection{Definitions}
+
+The state-value function is
+\begin{equation}
+V^\pi(s):=\E\!\left[G_t \mid s_t=s\right],
+\end{equation}
+and the action-value function is
+\begin{equation}
+Q^\pi(s,a):=\E\!\left[G_t \mid s_t=s,\ a_t=a\right].
+\end{equation}
+The advantage function is
+\begin{equation}
+A^\pi(s,a):=Q^\pi(s,a)-V^\pi(s).
+\end{equation}
+All conditional expectations above are taken over future randomness induced by the same transition kernel $P$ and policy $\pi$.
+
+\subsubsection{Connection between $V^\pi$ and $Q^\pi$}
+
+\paragraph{(1) $V^\pi$ is the policy expectation of $Q^\pi$.}
+For every $s\in\mathcal{S}$,
+\begin{equation}
+V^\pi(s)=\E_{a\sim\pi(\cdot\mid s)}\big[Q^\pi(s,a)\big].
+\end{equation}
+
+\paragraph{(2) $Q^\pi$ is one-step reward plus discounted next-state value.}
+For every $(s,a)\in\mathcal{S}\times\mathcal{A}$,
+\begin{equation}
+Q^\pi(s,a)=r(s,a)+\gamma\,\E_{s'\sim P(\cdot\mid s,a)}\big[V^\pi(s')\big].
+\end{equation}
+
+\paragraph{Bellman expectation equation for $V^\pi$.}
+Combining the two identities yields:
+\begin{equation}
+V^\pi(s)
+=
+\E_{\substack{a\sim\pi(\cdot\mid s)\\ s'\sim P(\cdot\mid s,a)}}
+\big[r(s,a)+\gamma V^\pi(s')\big].
+\end{equation}
+
+\paragraph{Bellman expectation equation for $Q^\pi$.}
+Substituting $V^\pi(s')=\E_{a'\sim\pi(\cdot\mid s')}[Q^\pi(s',a')]$ into the $Q^\pi$ recursion gives:
+\begin{equation}
+Q^\pi(s,a)
+=
+r(s,a)+\gamma\,\E_{\substack{s'\sim P(\cdot\mid s,a)\\ a'\sim\pi(\cdot\mid s')}}
+\big[Q^\pi(s',a')\big].
+\end{equation}
+
+\subsubsection{Advantage function properties}
+
+\paragraph{(A) Advantage is centered under the policy.}
+For every $s\in\mathcal{S}$,
+\begin{equation}
+\E_{a\sim\pi(\cdot\mid s)}\big[A^\pi(s,a)\big]=0.
+\end{equation}
+\emph{Reason:} $\E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]
+=\E_{a\sim\pi(\cdot\mid s)}[Q^\pi(s,a)]-V^\pi(s)=V^\pi(s)-V^\pi(s)=0$.
+
+\paragraph{(B) Advantage has zero mean under discounted occupancy.}
+Sampling $(s,a)\sim d_\pi(s,a)$,
+\begin{equation}
+\E_{(s,a)\sim d_\pi}\big[A^\pi(s,a)\big]=0.
+\end{equation}
+\emph{Reason:} expand as $\E_{s\sim d_\pi}\E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]$ and apply (A).
+
+\paragraph{(C) One-step form of the advantage.}
+Using $Q^\pi(s,a)=r(s,a)+\gamma\,\E_{s'\sim P(\cdot\mid s,a)}[V^\pi(s')]$,
+\begin{equation}
+A^\pi(s,a)=r(s,a)+\gamma\,\E_{s'\sim P(\cdot\mid s,a)}[V^\pi(s')]-V^\pi(s).
+\end{equation}
+This identity is frequently used to build practical estimators by replacing $V^\pi$ with an approximator and the expectation over $s'$ with samples.
+
+\section{Policy Optimization}
+
+We consider a parameterized policy $\pi_\theta(a\mid s)$ with parameters $\theta\in\R^d$.
+
+\subsection{Objective}
+
+Define
+\begin{equation}
+J(\theta):=J(\pi_\theta)
+=
+\E_{\tau\sim p_{\pi_\theta}}\left[\sum_{t=0}^{\infty}\gamma^t r(s_t,a_t)\right].
+\end{equation}
+The goal of policy optimization is to maximize $J(\theta)$ over $\theta$.
+
+\subsection{Policy gradient theorem}
+
+Apply the log-derivative trick (Section~\ref{sec:log_derivative}) with $x=\tau$ and $p_\theta(\cdot)=p_{\pi_\theta}(\cdot)$:
+\begin{equation}
+\nabla_\theta J(\theta)
+=
+\E_{\tau\sim p_{\pi_\theta}}\!\left[G_0(\tau)\,\nabla_\theta \log p_{\pi_\theta}(\tau)\right].
+\end{equation}
+Only the policy terms depend on $\theta$, hence
+\begin{equation}
+\nabla_\theta \log p_{\pi_\theta}(\tau)
+=
+\sum_{t=0}^{\infty}\nabla_\theta \log \pi_\theta(a_t\mid s_t).
+\end{equation}
+Therefore,
+\begin{equation}
+\nabla_\theta J(\theta)
+=
+\E_{\tau\sim p_{\pi_\theta}}
+\left[
+G_0(\tau)\sum_{t=0}^{\infty}\nabla_\theta\log \pi_\theta(a_t\mid s_t)
+\right].
+\end{equation}
+
+A standard variance-reduced equivalent form uses reward-to-go:
+\begin{equation}
+\nabla_\theta J(\theta)
+=
+\E_{\tau\sim p_{\pi_\theta}}
+\left[
+\sum_{t=0}^{\infty}\nabla_\theta\log \pi_\theta(a_t\mid s_t)\,G_t(\tau)
+\right].
+\end{equation}
+
+Using the discounted occupancy distribution, one may write
+\begin{equation}
+\nabla_\theta J(\theta)
+=
+\frac{1}{1-\gamma}\;
+\E_{(s,a)\sim d_{\pi_\theta}}
+\big[\nabla_\theta\log\pi_\theta(a\mid s)\,Q^{\pi_\theta}(s,a)\big].
+\end{equation}
+
+\subsection{Basic policy optimization algorithm (Vanilla policy gradient)}
+
+At iteration $k$ with parameters $\theta_k$:
+
+\begin{enumerate}
+  \item \textbf{Sampling step:} Collect $N$ trajectories
+  \begin{equation}
+  \tau^{(1)},\dots,\tau^{(N)}\overset{i.i.d.}{\sim} p_{\pi_{\theta_k}}.
+  \end{equation}
+
+  \item \textbf{Return computation:} For each trajectory $i$ and time $t$, define (finite-horizon) reward-to-go
+  \begin{equation}
+  \widehat{G}_t^{(i)}:=\sum_{j=t}^{T_i-1}\gamma^{j-t}\,r\!\left(s_j^{(i)},a_j^{(i)}\right).
+  \end{equation}
+
+  \item \textbf{Gradient estimator (distribution: $\tau^{(i)}\sim p_{\pi_{\theta_k}}$):}
+  \begin{equation}
+  \widehat{\nabla_\theta J}(\theta_k)
+  :=
+  \frac{1}{N}\sum_{i=1}^N\sum_{t=0}^{T_i-1}
+  \nabla_\theta\log\pi_{\theta_k}\!\left(a_t^{(i)}\mid s_t^{(i)}\right)\;
+  \widehat{G}_t^{(i)}.
+  \end{equation}
+
+  \item \textbf{Update:}
+  \begin{equation}
+  \theta_{k+1}:=\theta_k+\alpha\,\widehat{\nabla_\theta J}(\theta_k).
+  \end{equation}
+\end{enumerate}
+
+\subsection{Improvements for gradient stability}
+
+\subsubsection{Baseline (control variate)}
+
+Let $b:\mathcal{S}\to\R$ be any function. For each fixed $s\in\mathcal{S}$,
+\begin{equation}
+\E_{a\sim\pi_\theta(\cdot\mid s)}\big[\nabla_\theta\log\pi_\theta(a\mid s)\,b(s)\big]=0.
+\end{equation}
+Hence, subtracting $b(s_t)$ inside the policy-gradient estimator does not change the expected gradient under $\tau\sim p_{\pi_\theta}$:
+\begin{equation}
+\E_{\tau\sim p_{\pi_\theta}}
+\left[
+\sum_{t\ge 0}\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,G_t(\tau)
+\right]
+=
+\E_{\tau\sim p_{\pi_\theta}}
+\left[
+\sum_{t\ge 0}\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,(G_t(\tau)-b(s_t))
+\right].
+\end{equation}
+A canonical choice is $b(s)=V^{\pi_\theta}(s)$, which yields an advantage-style estimator.
+
+\subsubsection{A2C (Advantage Actor-Critic)}
+
+A2C maintains:
+\begin{itemize}
+  \item an actor $\pi_\theta(a\mid s)$,
+  \item a critic $V_\phi(s)\approx V^{\pi_\theta}(s)$.
+\end{itemize}
+
+\paragraph{Critic update (TD).}
+From on-policy samples
+\begin{equation}
+s_t\sim d_t^{\pi_\theta},\qquad a_t\sim\pi_\theta(\cdot\mid s_t),\qquad s_{t+1}\sim P(\cdot\mid s_t,a_t),
+\end{equation}
+define TD error
+\begin{equation}
+\delta_t(\phi):=r(s_t,a_t)+\gamma V_\phi(s_{t+1})-V_\phi(s_t).
+\end{equation}
+The critic parameters $\phi$ are typically updated to reduce (an empirical approximation of)
+\begin{equation}
+\E\big[\delta_t(\phi)^2\big],
+\end{equation}
+where the expectation is under the on-policy transition distribution above.
+
+\paragraph{Actor update (advantage estimate).}
+Define an advantage estimator, for example
+\begin{equation}
+\widehat{A}_t := \widehat{G}_t - V_\phi(s_t),
+\end{equation}
+where $\widehat{G}_t$ is computed from samples generated under $\tau\sim p_{\pi_\theta}$.
+Then a common actor gradient estimate is
+\begin{equation}
+\widehat{g}
+:=
+\widehat{\E}\Big[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,\widehat{A}_t\Big],
+\end{equation}
+where $\widehat{\E}$ denotes an empirical average over collected on-policy samples.
+
+\subsubsection{A3C (Asynchronous Advantage Actor-Critic)}
+
+A3C uses the same mathematical form as actor-critic with an advantage baseline, but changes the data-collection and update protocol:
+\begin{itemize}
+  \item multiple workers interact with (copies of) the environment in parallel,
+  \item each worker produces on-policy samples and computes gradients,
+  \item shared parameters are updated asynchronously.
+\end{itemize}
+Each worker's empirical estimates still correspond to expectations under its own on-policy sampling distribution; asynchrony affects the optimization dynamics, not the underlying estimator definitions.
+\section{Bounded Policy Optimization}
+
+\paragraph{Motivation.}
+Policy-gradient methods optimize $J(\pi)$ using samples generated by the current policy.
+A large policy update can sharply change the trajectory/state distribution, making previously collected data,
+value/advantage estimates, and importance weights unreliable. Bounded policy optimization makes this issue explicit:
+\begin{itemize}
+  \item start from an \emph{exact} expression for $J(\pi')-J(\pi)$,
+  \item introduce a \emph{local surrogate} objective that is estimable from data generated by $\pi$,
+  \item expose the resulting \emph{distribution shift penalty} and control it by conservative updates.
+\end{itemize}
+
+\subsection{Why naive policy optimization can fail: two toy pathologies}
+\label{sec:bpo_pathologies}
+
+This section introduces bounded (``conservative'') policy optimization.
+Before we build the formal machinery, we give two fully explicit examples showing why
+unconstrained policy updates can be unreliable.
+
+Throughout, fix an infinite-horizon discounted MDP
+$\mathcal{M}=(\mathcal{S},\mathcal{A},P,r,\rho_0,\gamma)$ with $\gamma\in[0,1)$ and deterministic reward
+$r:\mathcal{S}\times\mathcal{A}\to\R$.
+For any stationary policy $\pi$, define the performance
+\[
+J(\pi):=\E\!\left[\sum_{t=0}^\infty \gamma^t r(s_t,a_t)\right],
+\]
+where $s_0\sim \rho_0$, $a_t\sim \pi(\cdot\mid s_t)$, $s_{t+1}\sim P(\cdot\mid s_t,a_t)$.
+Define the value functions
+\[
+V^\pi(s):=\E\!\left[\sum_{t=0}^\infty \gamma^t r(s_t,a_t)\,\middle|\,s_0=s\right],\qquad
+Q^\pi(s,a):=\E\!\left[\sum_{t=0}^\infty \gamma^t r(s_t,a_t)\,\middle|\,s_0=s,\ a_0=a\right],
+\]
+and the advantage $A^\pi(s,a):=Q^\pi(s,a)-V^\pi(s)$.
+Define also the normalized discounted state-occupancy measure
+\[
+d_\pi(s):=(1-\gamma)\sum_{t=0}^\infty \gamma^t\,\Pr(s_t=s\mid \pi),
+\qquad \sum_s d_\pi(s)=1.
+\]
+
+\subsubsection{Example 1: A local surrogate predicts improvement, but true performance collapses (distribution shift)}
+\label{sec:example_distribution_shift}
+
+\paragraph{MDP definition.}
+Let $\mathcal{S}=\{s_0,s_1,s_\bot\}$ where $s_\bot$ is absorbing.
+Let $\rho_0(s_0)=1$.
+Let the action sets be
+$\mathcal{A}(s_0)=\{a_0,a_1\}$, $\mathcal{A}(s_1)=\{g,b\}$, and $\mathcal{A}(s_\bot)=\{\bot\}$.
+Transitions are deterministic:
+\[
+P(s_\bot\mid s_0,a_0)=1,\qquad P(s_1\mid s_0,a_1)=1,\qquad
+P(s_\bot\mid s_1,g)=P(s_\bot\mid s_1,b)=1,\qquad
+P(s_\bot\mid s_\bot,\bot)=1.
+\]
+Rewards are
+\[
+r(s_0,a_0)=r(s_0,a_1)=0,\qquad r(s_1,g)=1,\qquad r(s_1,b)=-M,\qquad r(s_\bot,\bot)=0,
+\]
+for some constant $M>0$.
+
+\paragraph{Two policies.}
+Fix parameters $\eta\in(0,1)$ and $\eta_2\in(0,1)$.
+Define an ``old'' policy $\pi$ by
+\[
+\pi(a_1\mid s_0)=\eta,\ \pi(a_0\mid s_0)=1-\eta,
+\qquad
+\pi(b\mid s_1)=\eta_2,\ \pi(g\mid s_1)=1-\eta_2.
+\]
+Define a ``candidate new'' policy $\pi'$ by
+\[
+\pi'(a_1\mid s_0)=1,\ \pi'(a_0\mid s_0)=0,
+\qquad
+\pi'(b\mid s_1)=1,\ \pi'(g\mid s_1)=0.
+\]
+Note that $\pi'$ is absolutely continuous w.r.t.\ $\pi$ action-wise (needed for ratios):
+$\pi(a_1\mid s_0)=\eta>0$ and $\pi(b\mid s_1)=\eta_2>0$.
+
+\paragraph{Compute $J(\pi)$ and $J(\pi')$ exactly.}
+First compute the value at $s_1$ under $\pi$:
+\[
+V^\pi(s_1)=\E_{a\sim\pi(\cdot\mid s_1)}[r(s_1,a)]
+=(1-\eta_2)\cdot 1 + \eta_2\cdot(-M)=1-\eta_2(1+M).
+\]
+From $s_0$, choosing $a_0$ terminates immediately with reward $0$, while choosing $a_1$ moves to $s_1$ and then terminates.
+Thus
+\[
+J(\pi)=V^\pi(s_0)=\eta\cdot \gamma V^\pi(s_1)=\eta\,\gamma\big(1-\eta_2(1+M)\big).
+\]
+Under $\pi'$, we deterministically take $a_1$ then $b$, so
+\[
+J(\pi')=\gamma\cdot (-M)=-\gamma M.
+\]
+
+\paragraph{Compute the advantages $A^\pi$ needed for bounded optimization.}
+At $s_1$,
+\[
+A^\pi(s_1,b)=Q^\pi(s_1,b)-V^\pi(s_1)=(-M)-\big(1-\eta_2(1+M)\big)=-(1+M)(1-\eta_2).
+\]
+At $s_0$,
+\[
+Q^\pi(s_0,a_1)=\gamma V^\pi(s_1),\qquad
+V^\pi(s_0)=\eta\gamma V^\pi(s_1),
+\]
+so
+\[
+A^\pi(s_0,a_1)=Q^\pi(s_0,a_1)-V^\pi(s_0)=(1-\eta)\gamma V^\pi(s_1)
+=(1-\eta)\gamma\big(1-\eta_2(1+M)\big).
+\]
+
+\paragraph{Compute the discounted occupancies under $\pi$ and $\pi'$.}
+Because $s_0$ is visited only at $t=0$, we have $d_\pi(s_0)=d_{\pi'}(s_0)=(1-\gamma)$.
+State $s_1$ is visited at $t=1$ with probability $\eta$ under $\pi$ and with probability $1$ under $\pi'$.
+Hence
+\[
+d_\pi(s_1)=(1-\gamma)\gamma\eta,\qquad
+d_{\pi'}(s_1)=(1-\gamma)\gamma.
+\]
+
+\paragraph{A standard local surrogate that \emph{ignores} state-distribution shift.}
+Define the (action-wise importance-weighted) local surrogate around $\pi$:
+\[
+L_\pi(\pi')
+:=
+J(\pi)+\frac{1}{1-\gamma}\E_{s\sim d_\pi,\ a\sim\pi(\cdot\mid s)}
+\!\left[\frac{\pi'(a\mid s)}{\pi(a\mid s)}A^\pi(s,a)\right].
+\]
+In this example, the ratio collapses the action expectation at each visited state:
+\[
+\E_{a\sim\pi(\cdot\mid s_0)}\!\left[\frac{\pi'(a\mid s_0)}{\pi(a\mid s_0)}A^\pi(s_0,a)\right]
+= A^\pi(s_0,a_1),
+\qquad
+\E_{a\sim\pi(\cdot\mid s_1)}\!\left[\frac{\pi'(a\mid s_1)}{\pi(a\mid s_1)}A^\pi(s_1,a)\right]
+= A^\pi(s_1,b),
+\]
+so
+\begin{align*}
+L_\pi(\pi')-J(\pi)
+&=\frac{1}{1-\gamma}\Big(d_\pi(s_0)A^\pi(s_0,a_1)+d_\pi(s_1)A^\pi(s_1,b)\Big)\\
+&=\gamma\Big((1-\eta)\big(1-\eta_2(1+M)\big)-\eta(1+M)(1-\eta_2)\Big).
+\end{align*}
+
+\paragraph{Concrete numerical instantiation.}
+Take $\gamma=0.9$, $M=100$, $\eta_2=10^{-3}$, $\eta=10^{-4}$.
+Then $V^\pi(s_1)=1-\eta_2(1+M)=1-0.001\cdot 101=0.899$, and therefore
+\[
+J(\pi)=\eta\gamma V^\pi(s_1)=10^{-4}\cdot 0.9\cdot 0.899=8.091\times 10^{-5},
+\qquad
+J(\pi')=-\gamma M=-90.
+\]
+The surrogate ``improvement'' equals
+\[
+L_\pi(\pi')-J(\pi)
+=\gamma\Big((1-\eta)V^\pi(s_1)-\eta(1+M)(1-\eta_2)\Big)
+\approx 0.9\cdot(0.8989101-0.0100899)\approx 0.79994>0.
+\]
+Thus the local surrogate predicts a \emph{large positive} improvement,
+while the true performance drops from $8.091\times 10^{-5}$ to $-90$.
+
+\paragraph{What went wrong (formal diagnosis).}
+The exact performance difference identity weights $A^\pi(s,a)$ by the \emph{new} occupancy $d_{\pi'}$:
+\[
+J(\pi')-J(\pi)=\frac{1}{1-\gamma}\E_{s\sim d_{\pi'},\ a\sim \pi'(\cdot\mid s)}[A^\pi(s,a)].
+\]
+In our MDP, the harmful term $A^\pi(s_1,b)=-(1+M)(1-\eta_2)$ is multiplied by $d_{\pi'}(s_1)=(1-\gamma)\gamma$,
+whereas the surrogate uses only $d_\pi(s_1)=(1-\gamma)\gamma\eta$.
+Since $\eta\ll 1$, the surrogate almost \emph{ignores} the bad behavior in $s_1$ even though $\pi'$ visits $s_1$ with high probability.
+This is precisely the \textbf{state-distribution shift} problem that bounded policy optimization controls.
+
+\subsubsection{Example 2: Trajectory importance sampling has variance that grows exponentially with horizon}
+\label{sec:example_is_variance}
+
+\paragraph{MDP definition (single-state, $H$-step episode embedded in an infinite-horizon MDP).}
+Let $\mathcal{S}=\{s,s_\bot\}$ with $\rho_0(s)=1$.
+For $t=0,1,\dots,H-1$, the state is $s$; after $H$ actions the process deterministically moves to the absorbing $s_\bot$.
+Let $\mathcal{A}(s)=\{0,1\}$ and $\mathcal{A}(s_\bot)=\{\bot\}$.
+Let the only nonzero reward be granted at the final transition:
+$r(s_\bot,\bot)=1$ and all other rewards are $0$.
+Hence, for any policy, the return is the \emph{deterministic constant} $G_0=\gamma^{H}\cdot 1$.
+
+\paragraph{Off-policy evaluation by trajectory importance sampling.}
+Suppose we have data $\tau^{(1)},\dots,\tau^{(N)}$ generated i.i.d.\ by a behavior policy $\pi$.
+For a target policy $\pi'$, define the trajectory likelihood ratio
+\[
+w(\tau):=\prod_{t=0}^{H-1}\frac{\pi'(a_t\mid s)}{\pi(a_t\mid s)}.
+\]
+The standard IS estimator of $J(\pi')$ is
+\[
+\widehat{J}_{\mathrm{IS}}(\pi')
+:=
+\frac{1}{N}\sum_{i=1}^N w(\tau^{(i)})\,G_0.
+\]
+It is unbiased because $\E_{\tau\sim p_\pi}[w(\tau)]=1$ (assuming action-wise absolute continuity).
+
+\paragraph{Closed-form variance and exponential blow-up.}
+Because $G_0=\gamma^H$ is constant here,
+\[
+\Var\big(\widehat{J}_{\mathrm{IS}}(\pi')\big)=\frac{\gamma^{2H}}{N}\Var_\pi(w(\tau)).
+\]
+Now take Bernoulli policies $\pi(1\mid s)=p$ and $\pi'(1\mid s)=q$ with $p,q\in(0,1)$.
+At each step the ratio is
+\[
+\frac{\pi'(a\mid s)}{\pi(a\mid s)}=
+\begin{cases}
+\frac{q}{p}, & a=1,\\[1mm]
+\frac{1-q}{1-p}, & a=0,
+\end{cases}
+\]
+and steps are i.i.d.\ under $\pi$, so
+\[
+\E_\pi[w(\tau)^2]
+=\left(\E_{a\sim\pi(\cdot\mid s)}\left[\left(\frac{\pi'(a\mid s)}{\pi(a\mid s)}\right)^2\right]\right)^{\!H}
+=\left(\frac{q^2}{p}+\frac{(1-q)^2}{1-p}\right)^{\!H}.
+\]
+Therefore,
+\[
+\Var_\pi(w(\tau))=\E_\pi[w(\tau)^2]-1
+=\left(\frac{q^2}{p}+\frac{(1-q)^2}{1-p}\right)^{\!H}-1,
+\]
+which grows exponentially in $H$ whenever $p\neq q$ (since then the base exceeds $1$).
+
+\paragraph{Numerical illustration.}
+Let $p=0.5$, $q=0.9$. Then
+\[
+\frac{q^2}{p}+\frac{(1-q)^2}{1-p}
+=\frac{0.81}{0.5}+\frac{0.01}{0.5}
+=1.62+0.02
+=1.64,
+\]
+so $\Var_\pi(w(\tau))=1.64^H-1$.
+Even for moderate $H$, the IS weights become extremely high-variance, making reliable improvement from reweighted old data difficult.
+
+\paragraph{Connection to bounded updates.}
+Example~\ref{sec:example_distribution_shift} shows that ignoring the state-distribution shift can make a ``local'' objective misleading.
+Example~\ref{sec:example_is_variance} shows that trying to \emph{correct} for distribution shift by exact trajectory importance sampling
+introduces variance that can explode with horizon.
+Bounded policy optimization methods (CPI/TRPO/PPO-style) can be understood as principled compromises:
+they seek policy improvements using surrogates that are estimable from on-policy (or nearly on-policy) data,
+while explicitly controlling how far the new policy can move from the old one.
+
+\subsection{Performance Difference Lemma}
+
+Let $\pi$ and $\pi'$ be two stationary policies. Recall the (normalized) discounted state occupancy
+\[
+d_\pi(s) := (1-\gamma)\sum_{t=0}^\infty \gamma^t\,\mathbb{P}(s_t=s\mid \pi),
+\qquad \sum_{s} d_\pi(s)=1.
+\]
+
+\paragraph{Lemma (Performance Difference).}
+For any $\pi,\pi'$,
+\begin{equation}
+J(\pi') - J(\pi)
+=
+\E_{\tau\sim p_{\pi'}}\left[\sum_{t=0}^{\infty}\gamma^t\,A^\pi(s_t,a_t)\right]
+=
+\frac{1}{1-\gamma}\;
+\E_{s\sim d_{\pi'},\ a\sim \pi'(\cdot\mid s)}\!\big[A^\pi(s,a)\big].
+\label{eq:pdl}
+\end{equation}
+
+\paragraph{Comment.}
+Equation \eqref{eq:pdl} is exact, but it depends on the unknown new-policy occupancy $d_{\pi'}$,
+which is the core difficulty we will address next.
+
+\subsection{Local surrogate objective and distribution shift penalty}
+
+Start from \eqref{eq:pdl} and expand the expectation over states:
+\begin{equation}
+J(\pi')
+=
+J(\pi)
++
+\frac{1}{1-\gamma}\sum_{s} d_{\pi'}(s)\;
+\E_{a\sim\pi'(\cdot\mid s)}\!\big[A^\pi(s,a)\big].
+\end{equation}
+
+Now add and subtract the same term with $d_\pi(s)$, and then apply action-wise importance sampling
+(to rewrite expectations under $\pi'(\cdot\mid s)$ using actions sampled from $\pi(\cdot\mid s)$):
+\begin{equation}
+\begin{aligned}
+J(\pi')
+&= J(\pi)
+ + \frac{1}{1-\gamma}\sum_{s} d_{\pi}(s)\;
+      \E_{a\sim\pi'(\cdot\mid s)}\!\big[A^\pi(s,a)\big] \\[-1mm]
+&\qquad
+ + \frac{1}{1-\gamma}\sum_{s}\big(d_{\pi'}(s)-d_{\pi}(s)\big)\;
+      \E_{a\sim\pi'(\cdot\mid s)}\!\big[A^\pi(s,a)\big] \\[2mm]
+&= J(\pi)
+ + \frac{1}{1-\gamma}\sum_{s} d_{\pi}(s)\;
+      \E_{a\sim\pi(\cdot\mid s)}\!\Big[\frac{\pi'(a\mid s)}{\pi(a\mid s)}A^\pi(s,a)\Big] \\[-1mm]
+&\qquad
+ + \frac{1}{1-\gamma}\sum_{s}\big(d_{\pi'}(s)-d_{\pi}(s)\big)\;
+      \E_{a\sim\pi(\cdot\mid s)}\!\Big[\frac{\pi'(a\mid s)}{\pi(a\mid s)}A^\pi(s,a)\Big].
+\end{aligned}
+\label{eq:surrogate_decomposition}
+\end{equation}
+
+We name the two parts in \eqref{eq:surrogate_decomposition}.
+
+\paragraph{Local surrogate objective.}
+\begin{equation}
+L_{\pi}(\pi')
+:=
+J(\pi)
++\frac{1}{1-\gamma}\;
+\E_{s\sim d_{\pi},\ a\sim\pi(\cdot\mid s)}\!\Big[\frac{\pi'(a\mid s)}{\pi(a\mid s)}A^\pi(s,a)\Big].
+\label{eq:local_surrogate}
+\end{equation}
+
+\paragraph{Distribution shift penalty.}
+\begin{equation}
+\mathrm{DSP}_{\pi}(\pi')
+:=
+\frac{1}{1-\gamma}\sum_{s}\big(d_{\pi'}(s)-d_{\pi}(s)\big)\;
+\E_{a\sim\pi(\cdot\mid s)}\!\Big[\frac{\pi'(a\mid s)}{\pi(a\mid s)}A^\pi(s,a)\Big].
+\label{eq:dsp}
+\end{equation}
+
+Thus, the exact identity is
+\begin{equation}
+J(\pi') = L_{\pi}(\pi') + \mathrm{DSP}_{\pi}(\pi').
+\end{equation}
+
+\paragraph{Why $\mathrm{DSP}_\pi(\pi')\to 0$ when policies are close.}
+The penalty depends on the occupancy difference $d_{\pi'}-d_\pi$.
+Intuitively, if $\pi'$ is close to $\pi$ at every state, then the induced Markov chain changes only slightly,
+so $d_{\pi'}$ is close to $d_\pi$. Formally, one can bound
+\[
+|\mathrm{DSP}_\pi(\pi')|
+\le
+\frac{1}{1-\gamma}\;\|d_{\pi'}-d_\pi\|_1 \cdot
+\max_s\left|\E_{a\sim\pi'(\cdot\mid s)}[A^\pi(s,a)]\right|,
+\]
+and $\|d_{\pi'}-d_\pi\|_1\to 0$ as $\pi'\to\pi$ (pointwise in $s$), hence $\mathrm{DSP}_\pi(\pi')\to 0$.
+
+\paragraph{Importance sampling viewpoint (action-wise).}
+The ratio $\pi'(a\mid s)/\pi(a\mid s)$ is exactly the importance weight that changes the action distribution
+from $\pi(\cdot\mid s)$ to $\pi'(\cdot\mid s)$ while keeping the state distribution $d_\pi$ fixed.
+This is what makes $L_\pi(\pi')$ estimable from trajectories generated by $\pi$.
+
+\subsection{Conservative Policy Update}
+
+Assume we have a current policy $\pi$ and an ``improved'' policy
+\begin{equation}
+\pi' \in \argmax_{\tilde{\pi}} L_\pi(\tilde{\pi}).
+\label{eq:pi_prime_def}
+\end{equation}
+Instead of jumping directly to $\pi'$, we update conservatively using a mixture policy:
+\begin{equation}
+\pi_\alpha(\cdot\mid s) := (1-\alpha)\,\pi(\cdot\mid s) + \alpha\,\pi'(\cdot\mid s),
+\qquad \alpha\in[0,1].
+\label{eq:mixture_policy}
+\end{equation}
+
+\paragraph{Properties of the mixture policy $\pi_\alpha$.}
+\begin{itemize}
+  \item \textbf{Validity.} For each $s$, $\pi_\alpha(\cdot\mid s)$ is a convex combination of distributions, hence a distribution.
+  \item \textbf{Controlled change.} For each $s$,
+  \[
+  D_{\mathrm{TV}}\!\big(\pi(\cdot\mid s),\pi_\alpha(\cdot\mid s)\big)
+  = \alpha\,D_{\mathrm{TV}}\!\big(\pi(\cdot\mid s),\pi'(\cdot\mid s)\big)\le \alpha.
+  \]
+  \item \textbf{Importance-weight form vs.\ $\pi$.} Whenever $\pi(a\mid s)>0$,
+  \begin{equation}
+  \frac{\pi_\alpha(a\mid s)}{\pi(a\mid s)} = (1-\alpha) + \alpha\,\frac{\pi'(a\mid s)}{\pi(a\mid s)}.
+  \label{eq:ratio_mixture}
+  \end{equation}
+\end{itemize}
+
+\paragraph{Surrogate objective for $\pi_\alpha$ is linear in $\alpha$.}
+Using $\E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]=0$,
+\begin{equation}
+\begin{aligned}
+L_\pi(\pi_\alpha)
+&= J(\pi)
+ + \frac{1}{1-\gamma}\E_{s\sim d_\pi,\ a\sim\pi(\cdot\mid s)}\!\Big[\frac{\pi_\alpha(a\mid s)}{\pi(a\mid s)}A^\pi(s,a)\Big] \\
+&= J(\pi)
+ + \frac{1}{1-\gamma}\E_{s\sim d_\pi}\E_{a\sim\pi(\cdot\mid s)}\!\Big[\big((1-\alpha)+\alpha\frac{\pi'(a\mid s)}{\pi(a\mid s)}\big)A^\pi(s,a)\Big] \\
+&= J(\pi)
+ + \alpha\cdot \frac{1}{1-\gamma}\E_{s\sim d_\pi,\ a\sim\pi'(\cdot\mid s)}\!\big[A^\pi(s,a)\big].
+\end{aligned}
+\label{eq:L_linear_alpha}
+\end{equation}
+
+Define the (surrogate) improvement term and a uniform statewise advantage magnitude:
+\begin{equation}
+g := \frac{1}{1-\gamma}\E_{s\sim d_\pi,\ a\sim\pi'(\cdot\mid s)}\!\big[A^\pi(s,a)\big]
+= L_\pi(\pi')-J(\pi),
+\qquad
+\epsilon := \max_{s}\left|\E_{a\sim\pi'(\cdot\mid s)}\!\big[A^\pi(s,a)\big]\right|.
+\label{eq:g_eps_def}
+\end{equation}
+Then \eqref{eq:L_linear_alpha} becomes $L_\pi(\pi_\alpha)=J(\pi)+\alpha g$.
+
+\paragraph{A conservative lower bound for $J(\pi_\alpha)$ (CPI bound).}
+For mixture updates \eqref{eq:mixture_policy}, one can bound the distribution shift penalty
+(using that both the occupancy change and the expected advantage under $\pi_\alpha$ scale with $\alpha$),
+obtaining the quadratic lower bound
+\begin{equation}
+J(\pi_\alpha)
+\;\ge\;
+L_\pi(\pi_\alpha)
+\;-\;
+\frac{2\gamma}{(1-\gamma)^2}\,\epsilon\,\alpha^2.
+\label{eq:cpi_bound}
+\end{equation}
+Combining with $L_\pi(\pi_\alpha)=J(\pi)+\alpha g$ yields
+\begin{equation}
+J(\pi_\alpha)-J(\pi)
+\;\ge\;
+\alpha\,g \;-\; \frac{2\gamma}{(1-\gamma)^2}\,\epsilon\,\alpha^2.
+\label{eq:cpi_improvement}
+\end{equation}
+
+\paragraph{Choosing $\alpha$.}
+The right-hand side of \eqref{eq:cpi_improvement} is a concave quadratic in $\alpha$.
+Maximizing it over $\alpha\in[0,1]$ gives
+\begin{equation}
+\alpha^\star
+=
+\min\left\{
+1,\;
+\frac{(1-\gamma)^2}{4\gamma}\cdot \frac{g}{\epsilon}
+\right\}.
+\label{eq:alpha_star}
+\end{equation}
+This choice guarantees a nontrivial lower bound on improvement whenever $g>0$.
+
+\subsection{Conservative Policy Iteration}
+
+We now turn the previous derivations into an algorithmic template.
+
+\paragraph{Conservative Policy Iteration (CPI) (template).}
+Initialize $\pi_0$. For $k=0,1,2,\dots$ repeat:
+\begin{enumerate}
+  \item \textbf{Collect on-policy data.} Sample trajectories $\tau\sim p_{\pi_k}$ and build an advantage estimator
+  $\widehat{A}^{\pi_k}(s,a)$ (e.g.\ via a critic and GAE / reward-to-go baseline).
+
+  \item \textbf{Surrogate improvement step (importance-sampled).}
+  Since data is generated by $\pi_k$, optimize an importance-weighted objective:
+  \begin{equation}
+  \pi_k' \approx \argmax_{\tilde{\pi}}
+  \E_{s\sim d_{\pi_k},\ a\sim \pi_k(\cdot\mid s)}\!\Big[\frac{\tilde{\pi}(a\mid s)}{\pi_k(a\mid s)}\,\widehat{A}^{\pi_k}(s,a)\Big].
+  \label{eq:cpi_step2_is}
+  \end{equation}
+  (The additive constant $J(\pi_k)$ and factor $1/(1-\gamma)$ are omitted since they do not affect the maximizer.)
+
+  \item \textbf{Estimate bound parameters.}
+  Estimate
+  \[
+  \widehat{g}_k := \frac{1}{1-\gamma}\E_{s\sim d_{\pi_k},\ a\sim \pi_k'(\cdot\mid s)}\!\big[\widehat{A}^{\pi_k}(s,a)\big],
+  \qquad
+  \widehat{\epsilon}_k := \max_s\left|\E_{a\sim\pi_k'(\cdot\mid s)}\!\big[\widehat{A}^{\pi_k}(s,a)\big]\right|,
+  \]
+  using empirical averages (and, for $\max_s$, typically a conservative approximation from batch data).
+
+  \item \textbf{Choose conservative step size.}
+  \begin{equation}
+  \alpha_k := \min\left\{1,\; \frac{(1-\gamma)^2}{4\gamma}\cdot \frac{\widehat{g}_k}{\widehat{\epsilon}_k}\right\}.
+  \end{equation}
+
+  \item \textbf{Conservative mixture update.}
+  \begin{equation}
+  \pi_{k+1}(\cdot\mid s) := (1-\alpha_k)\,\pi_k(\cdot\mid s) + \alpha_k\,\pi_k'(\cdot\mid s).
+  \end{equation}
+\end{enumerate}
+
+\paragraph{Interpretation.}
+Step 2 tries to improve the estimable surrogate $L_{\pi_k}(\cdot)$ using data from $\pi_k$.
+Step 5 keeps the update conservative so that the distribution shift penalty stays small,
+and the quadratic bound \eqref{eq:cpi_improvement} ensures the update is safe for sufficiently small $\alpha_k$.
+
+\subsection{Trust Region Policy Optimization (TRPO)}
+
+\paragraph{Transition from CPI to trust regions.}
+In the previous subsections we obtained an exact decomposition
+\[
+J(\pi') = L_{\pi}(\pi') + \mathrm{DSP}_{\pi}(\pi'),
+\]
+where $L_{\pi}(\pi')$ is estimable from data generated by $\pi$ (via action-wise importance sampling),
+and $\mathrm{DSP}_{\pi}(\pi')$ captures the error caused by the state-distribution shift $d_{\pi'}-d_\pi$.
+CPI controls this shift by making conservative mixture updates $\pi_\alpha=(1-\alpha)\pi+\alpha\pi'$.
+
+TRPO follows the same core idea---\emph{maximize the local surrogate while keeping the policy update small}---but
+instead of mixing policies with a scalar $\alpha$, it directly constrains the update size using a
+\textbf{trust region} measured by KL divergence between the old and new policies. 
+
+\subsubsection{Parameterized policies and the trust-region problem}
+
+Let $\pi_\theta(a\mid s)$ be a differentiable, parameterized policy and let $\theta_{\mathrm{old}}$ denote the parameters of the
+behavior policy that generated the current batch of trajectories. Following our earlier surrogate definition
+\eqref{eq:local_surrogate}, we define the (parameterized) surrogate objective
+\begin{equation}
+L_{\theta_{\mathrm{old}}}(\theta)
+:=
+J(\pi_{\theta_{\mathrm{old}}})
++\frac{1}{1-\gamma}\;
+\E_{s\sim d_{\pi_{\theta_{\mathrm{old}}}},\ a\sim \pi_{\theta_{\mathrm{old}}}(\cdot\mid s)}
+\!\Bigg[
+\frac{\pi_\theta(a\mid s)}{\pi_{\theta_{\mathrm{old}}}(a\mid s)}\;
+A^{\pi_{\theta_{\mathrm{old}}}}(s,a)
+\Bigg].
+\label{eq:trpo_surrogate}
+\end{equation}
+As usual, the additive constant $J(\pi_{\theta_{\mathrm{old}}})$ does not affect the maximizer, but we keep it to match
+the book-wide definition of $L_\pi(\cdot)$.
+
+To keep the distribution shift penalty small, TRPO constrains how far the new policy moves away from the old one,
+using a KL trust region. A theoretically motivated (but impractical) version constrains the \emph{maximum} per-state KL:
+\begin{equation}
+\max_{s}\ \KL\!\Big(\pi_{\theta_{\mathrm{old}}}(\cdot\mid s)\ \|\ \pi_{\theta}(\cdot\mid s)\Big) \le \delta.
+\label{eq:max_kl_constraint}
+\end{equation}
+Since \eqref{eq:max_kl_constraint} is difficult to enforce directly (it is effectively a large collection of constraints),
+TRPO uses a practical approximation based on the \emph{average} KL under the old-policy state distribution:
+\begin{equation}
+\E_{s\sim d_{\pi_{\theta_{\mathrm{old}}}}}\Big[\KL\!\big(\pi_{\theta_{\mathrm{old}}}(\cdot\mid s)\ \|\ \pi_{\theta}(\cdot\mid s)\big)\Big] \le \delta.
+\label{eq:avg_kl_constraint}
+\end{equation}
+Thus TRPO updates $\theta$ by approximately solving:
+\begin{equation}
+\begin{aligned}
+\max_{\theta}\quad & L_{\theta_{\mathrm{old}}}(\theta)\\
+\text{s.t.}\quad &
+\E_{s\sim d_{\pi_{\theta_{\mathrm{old}}}}}\Big[\KL\!\big(\pi_{\theta_{\mathrm{old}}}(\cdot\mid s)\ \|\ \pi_{\theta}(\cdot\mid s)\big)\Big] \le \delta.
+\end{aligned}
+\label{eq:trpo_constrained_problem}
+\end{equation}
+This is the defining optimization problem of TRPO.
+
+\subsubsection{Sample-based objective and constraint}
+
+In practice, we have a batch of samples $(s_t,a_t)$ generated by $\pi_{\theta_{\mathrm{old}}}$ and an advantage estimator
+$\widehat{A}_t \approx A^{\pi_{\theta_{\mathrm{old}}}}(s_t,a_t)$. Using empirical averages over timesteps in the batch,
+we optimize the empirical surrogate (dropping constants):
+\begin{equation}
+\widehat{L}(\theta)
+:=
+\widehat{\E}_{t}\left[
+\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\mathrm{old}}}(a_t\mid s_t)}\;\widehat{A}_t
+\right],
+\label{eq:trpo_empirical_surrogate}
+\end{equation}
+subject to the empirical average-KL constraint
+\begin{equation}
+\widehat{D}_{\KL}(\theta_{\mathrm{old}},\theta)
+:=
+\widehat{\E}_{t}\left[
+\KL\!\big(\pi_{\theta_{\mathrm{old}}}(\cdot\mid s_t)\ \|\ \pi_{\theta}(\cdot\mid s_t)\big)
+\right]
+\le \delta.
+\label{eq:trpo_empirical_kl}
+\end{equation}
+This keeps the update within a trust region around $\pi_{\theta_{\mathrm{old}}}$ and is designed to prevent large
+distribution shifts. 
+
+\subsubsection{Efficient approximate solution (natural-gradient style step)}
+
+The constrained problem \eqref{eq:trpo_constrained_problem} is solved approximately via:
+(i) a linear approximation to the surrogate and (ii) a quadratic approximation to the KL constraint.
+Let
+\begin{equation}
+g := \nabla_\theta \widehat{L}(\theta)\big|_{\theta=\theta_{\mathrm{old}}}.
+\end{equation}
+A second-order expansion of \eqref{eq:trpo_empirical_kl} around $\theta_{\mathrm{old}}$ gives
+\begin{equation}
+\widehat{D}_{\KL}(\theta_{\mathrm{old}},\theta)
+\approx
+\frac{1}{2}(\theta-\theta_{\mathrm{old}})^\top A (\theta-\theta_{\mathrm{old}}),
+\qquad
+A := \nabla^2_\theta\widehat{D}_{\KL}(\theta_{\mathrm{old}},\theta)\big|_{\theta=\theta_{\mathrm{old}}}.
+\label{eq:trpo_quadratic_kl}
+\end{equation}
+The matrix $A$ is the (batch-averaged) Fisher information matrix associated with the policy class (as induced by KL). 
+
+With these approximations, the update direction $s$ is obtained by (approximately) solving the linear system
+\begin{equation}
+A s = g,
+\label{eq:As_eq_g}
+\end{equation}
+which is done efficiently using conjugate gradient and Fisher-vector products (so we never form $A$ explicitly). 
+
+Given a direction $s$, choose the largest step length that satisfies the quadratic constraint:
+\begin{equation}
+\beta := \sqrt{\frac{2\delta}{s^\top A s}},
+\qquad
+\theta_{\mathrm{cand}} := \theta_{\mathrm{old}} + \beta s.
+\label{eq:trpo_step_length}
+\end{equation}
+Finally, because both the surrogate and the KL are nonlinear in $\theta$, TRPO performs a backtracking line search
+along $s$ to ensure (a) improvement in $\widehat{L}$ and (b) satisfaction of the KL constraint. 
+
+\subsubsection{Algorithm (TRPO)}
+
+\paragraph{TRPO (one iteration).}
+Given current parameters $\theta_{\mathrm{old}}$:
+\begin{enumerate}
+  \item \textbf{Collect on-policy data.}
+  Roll out $\pi_{\theta_{\mathrm{old}}}$ to collect a batch of $(s_t,a_t,r_t)$ and compute an advantage estimator
+  $\widehat{A}_t$ for each timestep (e.g.\ via a critic and GAE / reward-to-go baseline).
+
+  \item \textbf{Form empirical surrogate and constraint.}
+  Use \eqref{eq:trpo_empirical_surrogate} and \eqref{eq:trpo_empirical_kl}.
+
+  \item \textbf{Compute search direction.}
+  Compute $g=\nabla_\theta \widehat{L}(\theta)\big|_{\theta=\theta_{\mathrm{old}}}$ and
+  use conjugate gradient to approximately solve $A s = g$,
+  where $A$ is the Hessian of $\widehat{D}_{\KL}(\theta_{\mathrm{old}},\theta)$ at $\theta=\theta_{\mathrm{old}}$
+  (implemented via Fisher-vector products). 
+
+  \item \textbf{Scale step to match trust region.}
+  Set $\beta=\sqrt{2\delta/(s^\top A s)}$ and propose $\theta_{\mathrm{cand}}=\theta_{\mathrm{old}}+\beta s$.
+
+  \item \textbf{Backtracking line search.}
+  Starting from $\theta_{\mathrm{cand}}$, repeatedly shrink the step (e.g.\ $\theta=\theta_{\mathrm{old}}+\xi\beta s$ with $\xi\in(0,1)$)
+  until both conditions hold:
+  \[
+  \widehat{L}(\theta) \ge \widehat{L}(\theta_{\mathrm{old}}),
+  \qquad
+  \widehat{D}_{\KL}(\theta_{\mathrm{old}},\theta)\le \delta.
+  \]
+  Accept the first $\theta$ that satisfies them. 
+
+  \item \textbf{Update.}
+  Set $\theta \leftarrow \theta_{\mathrm{new}}$ (the accepted parameters), and repeat.
+\end{enumerate}
+
+\paragraph{Summary.}
+TRPO directly instantiates the bounded-policy-optimization principle developed earlier:
+it maximizes a local surrogate objective that is estimable from $\pi_{\theta_{\mathrm{old}}}$ data,
+while enforcing a KL trust region so that the update remains conservative and the distribution shift penalty stays small. 
+
+
+\subsection{Proximal Policy Optimization (PPO)}
+
+\paragraph{Transition from trust regions to a first-order ``proximal'' objective.}
+From bounded policy optimization we obtained the local surrogate
+\[
+L_\pi(\pi')
+=
+J(\pi)
++\frac{1}{1-\gamma}\;
+\E_{s\sim d_{\pi},\ a\sim\pi(\cdot\mid s)}
+\!\Big[\frac{\pi'(a\mid s)}{\pi(a\mid s)}A^\pi(s,a)\Big],
+\]
+together with the fact that large updates make the distribution shift penalty non-negligible.
+TRPO enforces ``small updates'' by a KL trust-region constraint.
+PPO keeps the same surrogate structure but replaces the explicit constrained solve
+with a \emph{first-order} objective that discourages ratios far from $1$, enabling multiple epochs
+of minibatch optimization on the same on-policy batch.
+
+\subsubsection{The bounded-policy-optimization objective in parameter space}
+
+Let $\pi_\theta(a\mid s)$ be a differentiable policy class and let $\theta_{\mathrm{old}}$ be the parameters
+that generated the current batch of data (the behavior policy).
+Dropping the additive constant $J(\pi_{\theta_{\mathrm{old}}})$, the optimization target suggested by the
+bounded policy optimization surrogate is:
+\begin{equation}
+\theta_{\star}
+\in
+\argmax_{\theta}
+\;
+\E_{s\sim d_{\pi_{\theta_{\mathrm{old}}}},\ a\sim\pi_{\theta_{\mathrm{old}}}(\cdot\mid s)}
+\!\Bigg[
+\frac{\pi_{\theta}(a\mid s)}{\pi_{\theta_{\mathrm{old}}}(a\mid s)}
+\;A^{\pi_{\theta_{\mathrm{old}}}}(s,a)
+\Bigg].
+\label{eq:bpo_param_objective}
+\end{equation}
+
+\paragraph{Finite-batch estimator.}
+Assume we collected a finite batch of $m$ timesteps
+\[
+\mathcal{D}
+=
+\{(s_i,a_i,r_i,s_i')\}_{i=1}^m
+\quad\text{by rolling out}\quad
+a_i\sim \pi_{\theta_{\mathrm{old}}}(\cdot\mid s_i),
+\]
+and computed advantage estimates $\widehat{A}_i\approx A^{\pi_{\theta_{\mathrm{old}}}}(s_i,a_i)$.
+Define the probability ratio
+\begin{equation}
+r_i(\theta):=\frac{\pi_\theta(a_i\mid s_i)}{\pi_{\theta_{\mathrm{old}}}(a_i\mid s_i)}.
+\label{eq:ppo_ratio_def}
+\end{equation}
+Then the empirical surrogate corresponding to \eqref{eq:bpo_param_objective} is
+\begin{equation}
+\widehat{L}_{\mathrm{BPO}}(\theta)
+:=
+\frac{1}{m}\sum_{i=1}^m r_i(\theta)\,\widehat{A}_i.
+\label{eq:lbpo_empirical}
+\end{equation}
+Maximizing \eqref{eq:lbpo_empirical} with many gradient steps can push ratios $r_i(\theta)$ far from $1$,
+which empirically leads to destructively large updates; PPO modifies the objective to prevent that.
+
+\subsubsection{Clipped PPO objective (policy loss)}
+
+Fix $\varepsilon_{\mathrm{clip}}\in(0,1)$ and define the clipping operator
+\[
+\mathrm{clip}(x,1-\varepsilon_{\mathrm{clip}},1+\varepsilon_{\mathrm{clip}})
+:=
+\min\{1+\varepsilon_{\mathrm{clip}},\ \max\{x,\,1-\varepsilon_{\mathrm{clip}}\}\}.
+\]
+Define the clipped per-sample surrogate term
+\begin{equation}
+\ell_i^{\mathrm{CLIP}}(\theta)
+:=
+\min\Big(
+r_i(\theta)\,\widehat{A}_i,\;
+\mathrm{clip}(r_i(\theta),1-\varepsilon_{\mathrm{clip}},1+\varepsilon_{\mathrm{clip}})\,\widehat{A}_i
+\Big),
+\label{eq:ppo_clip_term}
+\end{equation}
+and the empirical clipped policy objective
+\begin{equation}
+\widehat{L}_{\mathrm{CLIP}}(\theta)
+:=
+\frac{1}{m}\sum_{i=1}^m \ell_i^{\mathrm{CLIP}}(\theta).
+\label{eq:ppo_clip_objective}
+\end{equation}
+The ``$\min$'' construction makes $\widehat{L}_{\mathrm{CLIP}}(\theta)$ a pessimistic (lower-bound style)
+modification of the basic surrogate \eqref{eq:lbpo_empirical}: it removes incentive to improve the objective
+by pushing $r_i(\theta)$ outside $[1-\varepsilon_{\mathrm{clip}},\,1+\varepsilon_{\mathrm{clip}}]$.
+
+\subsubsection{Full PPO optimization objective (actor--critic form)}
+
+In PPO practice, advantages are computed using a learned value function $V_\phi(s)$, and learning is done
+by optimizing a combined objective for policy and value parameters.
+
+\paragraph{Advantage and value targets (one standard choice).}
+Define TD residuals (on the collected batch)
+\[
+\delta_i(\phi) := r_i + \gamma V_\phi(s_i') - V_\phi(s_i).
+\]
+For a trajectory segment, define a truncated generalized advantage estimator (GAE-style):
+\begin{equation}
+\widehat{A}_i
+:=
+\sum_{j=0}^{L_i-1}(\gamma\lambda)^j\,\delta_{i+j}(\phi_{\mathrm{old}}),
+\qquad \lambda\in[0,1],
+\label{eq:ppo_gae_truncated}
+\end{equation}
+where $L_i$ is the remaining length of the segment starting at index $i$ (so the sum stays within the segment).
+A common compatible value target is
+\begin{equation}
+V_i^{\mathrm{targ}} := \widehat{A}_i + V_{\phi_{\mathrm{old}}}(s_i).
+\label{eq:ppo_vtarg}
+\end{equation}
+
+\paragraph{Value-function loss and entropy bonus.}
+Define the squared-error value loss per sample
+\begin{equation}
+\ell_i^{\mathrm{VF}}(\phi) := \big(V_\phi(s_i)-V_i^{\mathrm{targ}}\big)^2,
+\label{eq:ppo_vf_loss}
+\end{equation}
+and define an entropy bonus (Shannon entropy for discrete actions; differential entropy for continuous actions)
+\begin{equation}
+\mathcal{H}\big(\pi_\theta(\cdot\mid s)\big)
+:=
+-\sum_{a\in\mathcal{A}}\pi_\theta(a\mid s)\log \pi_\theta(a\mid s)
+\quad\text{(discrete $\mathcal{A}$)}.
+\label{eq:ppo_entropy}
+\end{equation}
+
+\paragraph{Combined PPO objective (maximization form).}
+Let $c_1,c_2\ge 0$ be coefficients. PPO (actor--critic style) performs approximate maximization of
+\begin{equation}
+(\theta_{\mathrm{new}},\phi_{\mathrm{new}})
+\in
+\argmax_{\theta,\phi}
+\;
+\widehat{L}_{\mathrm{CLIP+VF+S}}(\theta,\phi),
+\label{eq:ppo_full_argmax}
+\end{equation}
+where
+\begin{equation}
+\widehat{L}_{\mathrm{CLIP+VF+S}}(\theta,\phi)
+:=
+\frac{1}{m}\sum_{i=1}^m
+\Big(
+\ell_i^{\mathrm{CLIP}}(\theta)
+- c_1\,\ell_i^{\mathrm{VF}}(\phi)
++ c_2\,\mathcal{H}\big(\pi_\theta(\cdot\mid s_i)\big)
+\Big).
+\label{eq:ppo_full_objective}
+\end{equation}
+(Equivalently: one may \emph{minimize} the negative of \eqref{eq:ppo_full_objective}.)
+
+\subsubsection{Algorithm (PPO, parameterized by $\theta$)}
+
+\paragraph{PPO (one iteration, mathematically explicit).}
+Fix hyperparameters: clipping $\varepsilon_{\mathrm{clip}}$, discount $\gamma$, GAE $\lambda$,
+coefficients $c_1,c_2$, number of epochs $K$, minibatch size $M$ ($M\le m$), and an optimizer/stepsize.
+
+Let $(\theta_{\mathrm{old}},\phi_{\mathrm{old}})$ be current parameters.
+\begin{enumerate}
+  \item \textbf{Sampling.}
+  Roll out $\pi_{\theta_{\mathrm{old}}}$ to obtain a batch
+  $\mathcal{D}=\{(s_i,a_i,r_i,s_i')\}_{i=1}^m$.
+
+  \item \textbf{Compute targets from $\phi_{\mathrm{old}}$.}
+  Compute $\widehat{A}_i$ using \eqref{eq:ppo_gae_truncated} (with $\phi_{\mathrm{old}}$ fixed inside it)
+  and compute $V_i^{\mathrm{targ}}$ via \eqref{eq:ppo_vtarg}.
+
+  \item \textbf{Optimization (approximate argmax by SGD).}
+  Initialize $(\theta,\phi)\leftarrow(\theta_{\mathrm{old}},\phi_{\mathrm{old}})$.
+  For epoch $e=1,\dots,K$:
+  \begin{itemize}
+    \item Partition (or sample) $\mathcal{D}$ into minibatches $B\subset\{1,\dots,m\}$ of size $M$.
+    \item For each minibatch $B$, compute the minibatch objective
+    \[
+    \widehat{L}_{B}(\theta,\phi)
+    :=
+    \frac{1}{|B|}\sum_{i\in B}
+    \Big(
+    \ell_i^{\mathrm{CLIP}}(\theta)
+    -c_1\,\ell_i^{\mathrm{VF}}(\phi)
+    +c_2\,\mathcal{H}(\pi_\theta(\cdot\mid s_i))
+    \Big),
+    \]
+    where $\ell_i^{\mathrm{CLIP}}$ uses ratios $r_i(\theta)$ from \eqref{eq:ppo_ratio_def}.
+    \item Update $(\theta,\phi)$ by one step of stochastic gradient ascent on $\widehat{L}_B(\theta,\phi)$.
+  \end{itemize}
+
+  \item \textbf{Commit the update.}
+  Set $(\theta_{\mathrm{old}},\phi_{\mathrm{old}})\leftarrow(\theta,\phi)$ and proceed to the next iteration.
+\end{enumerate}
+
+\paragraph{Optional: KL-penalty proximal objective.}
+Instead of clipping, one may optimize the KL-penalized surrogate
+\[
+\widehat{L}_{\mathrm{KLPEN}}(\theta)
+:=
+\frac{1}{m}\sum_{i=1}^m
+\Big(
+r_i(\theta)\widehat{A}_i
+-\beta\,\KL(\pi_{\theta_{\mathrm{old}}}(\cdot\mid s_i)\ \|\ \pi_\theta(\cdot\mid s_i))
+\Big),
+\]
+possibly with adaptive updates of $\beta$ to keep the realized average KL near a target.
+
+\section{Effective Policy Optimization methods}
+
+Previously we introduced on-policy policy-gradient methods (e.g.\ PPO-style bounded updates) that work well in practice. However, in large language model (LLM) alignment, a direct actor--critic implementation is often expensive: the critic $V_\phi$ is typically a neural network of comparable scale to the policy $\pi_\theta$, which (for LLMs) means training \emph{two} large sequence models simultaneously.
+
+This chapter focuses on \emph{critic-free} (or critic-light) policy-optimization methods that are widely used in modern LLM alignment pipelines. The main idea is to replace learned value baselines with \emph{group-based Monte-Carlo baselines} and to stabilize updates via \emph{bounded} or \emph{softly gated} importance weighting.
+
+\subsection{RL task setup for LLM alignment}
+\label{sec:rl_setup_llm_alignment}
+
+\paragraph{Tokens as actions, prefixes as states.}
+Fix a vocabulary $\mathcal{V}$ and a prompt (query) space $\mathcal{X}$.
+A parameterized autoregressive LLM policy $\pi_\theta$ defines a distribution over token sequences conditioned on a prompt:
+\begin{equation}
+\pi_\theta(y\mid x)
+=
+\prod_{t=1}^{T(y)} \pi_\theta\!\big(y_t \mid x, y_{<t}\big),
+\qquad
+y=(y_1,\dots,y_{T(y)})\in \mathcal{V}^{T(y)}.
+\end{equation}
+We view generation as an episodic MDP:
+\begin{itemize}
+  \item \textbf{State space:}
+  \(
+    \mathcal{S} := \bigcup_{t\ge 0}\big(\mathcal{X}\times \mathcal{V}^t\big).
+  \)
+  A state is the current prompt-prefix pair
+  \(
+    s_t := (x, y_{<t}).
+  \)
+  \item \textbf{Action space:} \(
+    \mathcal{A}:=\mathcal{V}\cup\{\texttt{EOS}\}.
+  \)
+  The action is the next token
+  \(
+    a_t := y_t \sim \pi_\theta(\cdot\mid s_t).
+  \)
+  \item \textbf{Transition:} deterministic concatenation
+  \(
+    s_{t+1}=(x,y_{\le t}),
+  \)
+  until \texttt{EOS} or a max length.
+\end{itemize}
+
+\paragraph{Reward model and KL-regularized objective.}
+Let $\rho$ be a distribution over prompts $x\sim\rho$ (e.g.\ a dataset).
+Let $R(x,y)\in\R$ be a scalar sequence-level score (often produced by a reward model or preference model).
+A standard alignment objective penalizes deviation from a fixed \emph{reference} policy $\pi_{\mathrm{ref}}$ (usually the SFT model) via a KL term:
+\begin{equation}
+J_\beta(\theta)
+:=
+\E_{x\sim\rho}\E_{y\sim \pi_\theta(\cdot\mid x)}
+\left[
+R(x,y)
+-\beta \sum_{t=1}^{T(y)} \log\frac{\pi_\theta(y_t\mid x,y_{<t})}{\pi_{\mathrm{ref}}(y_t\mid x,y_{<t})}
+\right],
+\qquad \beta>0.
+\label{eq:llm_kl_objective}
+\end{equation}
+The log-ratio term in~\eqref{eq:llm_kl_objective} is a Monte-Carlo estimator of the per-state KL divergence (under actions sampled from $\pi_\theta$), so maximizing $J_\beta$ encourages high reward while keeping $\pi_\theta$ close to $\pi_{\mathrm{ref}}$.
+
+\paragraph{On-policy iteration with a frozen behavior policy.}
+As in PPO-style methods, each update iteration uses a frozen \emph{behavior} policy
+\(
+\pi_{\theta_{\mathrm{old}}}
+\)
+to sample data, and then updates $\theta$ using importance ratios that correct from $\pi_{\theta_{\mathrm{old}}}$ to $\pi_\theta$.
+
+\subsection{Group-based Monte-Carlo baselines (critic-free advantages)}
+\label{sec:group_baseline}
+
+A key practical trick in LLM RL is that rewards are often computed at the \emph{sequence} level, and learning a high-quality token-level critic can be costly and unstable. Group-based methods replace the critic baseline with statistics computed from multiple samples per prompt.
+
+Fix a group size $G\in\N$. For a prompt $x$, sample a \emph{group} of responses from the behavior policy:
+\begin{equation}
+y^{(1)},\dots,y^{(G)} \overset{i.i.d.}{\sim} \pi_{\theta_{\mathrm{old}}}(\cdot\mid x),
+\qquad
+y^{(i)}=(y^{(i)}_1,\dots,y^{(i)}_{T_i}),
+\quad T_i:=T(y^{(i)}).
+\end{equation}
+Compute scalar scores (possibly already KL-shaped)
+\begin{equation}
+u^{(i)} := u(x,y^{(i)})\in\R
+\qquad
+(\text{e.g.\ } u(x,y)=R(x,y)\ \text{or}\ R(x,y)-\beta\,\text{KL penalty}).
+\end{equation}
+Define the group mean and standard deviation
+\begin{equation}
+\bar{u}:=\frac{1}{G}\sum_{j=1}^G u^{(j)},
+\qquad
+s_u:=\sqrt{\frac{1}{G}\sum_{j=1}^G\big(u^{(j)}-\bar{u}\big)^2}+\varepsilon,
+\quad \varepsilon>0,
+\end{equation}
+and the \emph{group-normalized advantage} (shared across all tokens within the same sampled response)
+\begin{equation}
+\widehat{A}^{(i)}
+:=
+\frac{u^{(i)}-\bar{u}}{s_u}.
+\label{eq:group_advantage}
+\end{equation}
+By construction, $\sum_{i=1}^G \widehat{A}^{(i)}=0$ and the baseline is computed with \emph{no} learned value network.
+
+\paragraph{Token and sequence importance ratios.}
+For each sampled response $y^{(i)}$ and each token position $t$ define the token-level ratio
+\begin{equation}
+r^{(i)}_{t}(\theta)
+:=
+\frac{\pi_\theta\!\big(y^{(i)}_t\mid x,y^{(i)}_{<t}\big)}{\pi_{\theta_{\mathrm{old}}}\!\big(y^{(i)}_t\mid x,y^{(i)}_{<t}\big)}.
+\label{eq:token_ratio}
+\end{equation}
+Token ratios can be high-variance for long generations. A common stabilization is a \emph{length-normalized sequence ratio} (geometric mean of token ratios):
+\begin{equation}
+r^{(i)}_{\mathrm{seq}}(\theta)
+:=
+\left(\frac{\pi_\theta(y^{(i)}\mid x)}{\pi_{\theta_{\mathrm{old}}}(y^{(i)}\mid x)}\right)^{\!\!1/T_i}
+=
+\exp\!\left(\frac{1}{T_i}\sum_{t=1}^{T_i}\log r^{(i)}_{t}(\theta)\right).
+\label{eq:seq_ratio}
+\end{equation}
+
+\subsection{Group Relative Policy Optimization (GRPO)}
+\label{sec:grpo}
+
+\paragraph{Motivation.}
+In LLM alignment, training a separate value network $V_\phi$ (critic) is often as expensive as training the policy itself.
+GRPO is a \emph{critic-free} bounded policy optimization method: it replaces the learned baseline with a
+\emph{group-relative} baseline computed from multiple rollouts of the same prompt, and it keeps updates conservative
+via a PPO-style clipped surrogate. This combination is widely used in reasoning-style RL for LLMs.
+
+\subsubsection{Optimized surrogate objective}
+
+Fix a group size $G\in\N$ and a clipping parameter $\epsilon\in(0,1)$. For a prompt $x\sim\rho$, sample
+\begin{equation}
+y^{(1)},\dots,y^{(G)} \overset{i.i.d.}{\sim} \pi_{\theta_{\mathrm{old}}}(\cdot\mid x),
+\qquad
+y^{(i)}=(y^{(i)}_1,\dots,y^{(i)}_{T_i}),\quad T_i:=|y^{(i)}|.
+\end{equation}
+Compute scalar rewards $R^{(i)}:=R(x,y^{(i)})$ and the group-relative advantage $\widehat{A}^{(i)}$
+(e.g. mean/std normalization within the group).
+
+\paragraph{Token-level importance ratio.}
+For each token position $t$ in completion $y^{(i)}$, define the token-level importance ratio
+\begin{equation}
+r^{(i)}_{t}(\theta)
+:=
+\frac{\pi_{\theta}\!\big(y^{(i)}_{t}\mid x,y^{(i)}_{<t}\big)}
+     {\pi_{\theta_{\mathrm{old}}}\!\big(y^{(i)}_{t}\mid x,y^{(i)}_{<t}\big)}.
+\label{eq:grpo_ratio}
+\end{equation}
+
+\paragraph{Clipped per-token surrogate.}
+Define the clipped per-token term
+\begin{equation}
+\ell^{\mathrm{GRPO}}_{i,t}(\theta)
+:=
+\min\!\Big(
+r^{(i)}_{t}(\theta)\,\widehat{A}^{(i)},
+\ \mathrm{clip}\!\big(r^{(i)}_{t}(\theta),\,1-\epsilon,\,1+\epsilon\big)\,\widehat{A}^{(i)}
+\Big).
+\label{eq:grpo_token_loss}
+\end{equation}
+This is the standard PPO-style clipping applied at token-level.
+
+\paragraph{GRPO Objective.}
+The GRPO surrogate objective is the group-average of token losses, with a KL regularizer to a reference policy
+(as in the RLHF-style objective introduced earlier).
+\begin{equation}
+\begin{aligned}
+L^{\mathrm{GRPO}}(\theta)
+:=
+&\ \E_{x\sim\rho}\;
+   \E_{\{y^{(i)}\}_{i=1}^G\sim(\pi_{\theta_{\mathrm{old}}})^G(\cdot\mid x)}
+   \left[
+   \frac{1}{G}\sum_{i=1}^{G}\frac{1}{T_i}\sum_{t=1}^{T_i}
+   \ell^{\mathrm{GRPO}}_{i,t}(\theta)
+   \right] \\
+&\ -\beta\;
+   \E_{x\sim\rho}\big[\KL(\pi_\theta(\cdot\mid x)\ \|\ \pi_{\mathrm{ref}}(\cdot\mid x))\big],
+\end{aligned}
+\label{eq:grpo_objective}
+\end{equation}
+where the KL term is implemented in practice via sampled token-level log-ratio penalties (or an explicit per-state KL),
+exactly as in our earlier KL-regularized LLM objective.
+
+\subsubsection{Optimization algorithm (GRPO)}
+
+At iteration $k$ with parameters $\theta_k$:
+\begin{enumerate}
+  \item \textbf{Freeze behavior policy:} set $\theta_{\mathrm{old}}\leftarrow\theta_k$.
+  \item \textbf{Sample prompts:} draw $x^{(1)},\dots,x^{(B)}\sim\rho$.
+  \item \textbf{Group rollouts:} for each $x^{(b)}$, sample $G$ completions
+  \(
+  y^{(b,1)},\dots,y^{(b,G)}\sim \pi_{\theta_{\mathrm{old}}}(\cdot\mid x^{(b)}).
+  \)
+  \item \textbf{Compute rewards and advantages:} compute $R^{(b,i)}=R(x^{(b)},y^{(b,i)})$ and
+  $\widehat{A}^{(b,i)}$ (group-relative baseline; typically mean/std normalization within group).
+  \item \textbf{Optimize:} perform $E$ epochs of stochastic gradient ascent on $L^{\mathrm{GRPO}}(\theta)$
+  (using ratios \eqref{eq:grpo_ratio} and clipped term \eqref{eq:grpo_token_loss}), updating
+  \(
+    \theta \leftarrow \theta + \alpha\,\widehat{\nabla_\theta L^{\mathrm{GRPO}}}(\theta).
+  \)
+\end{enumerate}
+
+\subsection{Modifications of GRPO}
+
+\subsubsection{Dr.\ GRPO (Group Relative Policy Optimization Done Right)}
+\label{sec:dr_grpo}
+
+\paragraph{Motivation: removing aggregation bias.}
+Follow-up work observed that the original GRPO aggregation
+\(\frac{1}{T_i}\sum_{t=1}^{T_i}\cdot\) introduces a \emph{length-dependent} scaling of token gradients,
+and that dividing by the within-group reward standard deviation can introduce a \emph{question-difficulty bias}
+(since groups with smaller reward variance get amplified). Dr.\ GRPO proposes to remove these normalizations,
+yielding a cleaner, empirically more stable update.
+
+\paragraph{(1) Advantage without std scaling.}
+Dr.\ GRPO keeps the group-relative mean baseline but removes the standard-deviation scaling:
+\begin{equation}
+\widehat{A}^{(i)}_{\mathrm{Dr}}
+:=
+R^{(i)}-\bar{R},
+\qquad
+\bar{R}:=\frac{1}{G}\sum_{j=1}^G R^{(j)}.
+\label{eq:dr_grpo_adv}
+\end{equation}
+This addresses the difficulty-dependent rescaling effect attributed to $\mathrm{std}(\{R^{(j)}\})$.
+
+\paragraph{(2) Token aggregation with a global normalizer.}
+Instead of per-response normalization by $T_i$, Dr.\ GRPO aggregates token losses and normalizes by a
+\emph{global constant} (often chosen as the maximum completion length $T_{\max}$ used in training).
+Define the Dr.\ GRPO per-token clipped term by reusing \eqref{eq:grpo_token_loss} but replacing $\widehat A^{(i)}$ with
+$\widehat A^{(i)}_{\mathrm{Dr}}$:
+\begin{equation}
+\ell^{\mathrm{DrGRPO}}_{i,t}(\theta)
+:=
+\min\!\Big(
+r^{(i)}_{t}(\theta)\,\widehat{A}^{(i)}_{\mathrm{Dr}},
+\ \mathrm{clip}\!\big(r^{(i)}_{t}(\theta),\,1-\epsilon,\,1+\epsilon\big)\,\widehat{A}^{(i)}_{\mathrm{Dr}}
+\Big).
+\label{eq:dr_grpo_token_loss}
+\end{equation}
+Then the Dr.\ GRPO surrogate is
+\begin{equation}
+\begin{aligned}
+L^{\mathrm{DrGRPO}}(\theta)
+:=
+&\ \E_{x\sim\rho}\;
+   \E_{\{y^{(i)}\}_{i=1}^G\sim(\pi_{\theta_{\mathrm{old}}})^G(\cdot\mid x)}
+   \left[
+   \frac{1}{G}\sum_{i=1}^{G}\frac{1}{T_{\max}}\sum_{t=1}^{T_i}
+   \ell^{\mathrm{DrGRPO}}_{i,t}(\theta)
+   \right]
+\ -\beta\;\E_{x\sim\rho}\big[\KL(\pi_\theta(\cdot\mid x)\ \|\ \pi_{\mathrm{ref}}(\cdot\mid x))\big].
+\end{aligned}
+\label{eq:dr_grpo_objective}
+\end{equation}
+Because the normalization no longer depends on $T_i$, this objective avoids incentivizing length changes purely through the
+loss aggregation rule.
+
+\paragraph{Algorithmic changes.}
+Dr.\ GRPO is implemented by the same loop as GRPO, but with:
+(i) advantages \eqref{eq:dr_grpo_adv} (no std scaling),
+(ii) aggregation \eqref{eq:dr_grpo_objective} (global constant normalizer).
+
+\subsubsection{DAPO: Decoupled Clip and Dynamic sAmpling Policy Optimization}
+\label{sec:dapo_as_grpo_mod}
+
+\paragraph{Motivation: entropy/gradient collapse and length bias.}
+DAPO is a GRPO-based recipe designed for stable large-scale reasoning RL, addressing several failure modes observed in practice:
+(i) \emph{entropy collapse} from overly restrictive symmetric clipping,
+(ii) \emph{vanishing gradients} when a whole group has identical rewards (hence zero group-relative signal),
+(iii) \emph{length-related bias} in how token losses are aggregated,
+and (iv) reward noise induced by truncation/overlong generations.
+
+\paragraph{(1) Decoupled (asymmetric) clipping.}
+Replace symmetric clipping with separate lower/upper bounds:
+\begin{equation}
+\mathrm{clip}_{\mathrm{d}}(r)
+:=
+\mathrm{clip}\!\big(r,\ 1-\epsilon_{\mathrm{low}},\ 1+\epsilon_{\mathrm{high}}\big),
+\qquad
+\epsilon_{\mathrm{low}},\epsilon_{\mathrm{high}}>0.
+\label{eq:dapo_decoupled_clip}
+\end{equation}
+This permits larger probability \emph{increases} (when beneficial) while keeping probability decreases conservative,
+which empirically helps maintain exploration.
+
+\paragraph{(2) Dynamic sampling to avoid zero-signal groups.}
+If all sampled completions for a prompt receive the same reward, then $\widehat{A}^{(i)}\equiv 0$ (or undefined when dividing by std),
+producing a zero policy gradient. DAPO therefore resamples prompts/groups until they contain a non-degenerate reward signal
+(e.g. nonzero within-group reward variance, or a mix of outcomes) so that each batch carries learning signal.
+
+\paragraph{(3) Token-level aggregation that removes length bias.}
+Rather than averaging token losses inside each response via $1/T_i$, DAPO aggregates token losses over the batch and normalizes
+by the number of \emph{active tokens} (or an equivalent global normalizer), which reduces systematic preference for certain lengths
+induced by per-response scaling.
+Formally, if a batch contains total active token count
+\(
+N_{\mathrm{tok}}:=\sum_{b=1}^B\sum_{i=1}^G T_{b,i},
+\)
+then a clean mathematical surrogate is:
+\begin{equation}
+\begin{aligned}
+L^{\mathrm{DAPO}}(\theta)
+:=
+&\ \E\left[
+\frac{1}{N_{\mathrm{tok}}}
+\sum_{b=1}^{B}\sum_{i=1}^{G}\sum_{t=1}^{T_{b,i}}
+\min\!\Big(
+r^{(b,i)}_{t}(\theta)\,\widehat{A}^{(b,i)},
+\ \mathrm{clip}_{\mathrm{d}}\!\big(r^{(b,i)}_{t}(\theta)\big)\,\widehat{A}^{(b,i)}
+\Big)
+\right] \\
+&\ -\beta\;\E_{x\sim\rho}\big[\KL(\pi_\theta(\cdot\mid x)\ \|\ \pi_{\mathrm{ref}}(\cdot\mid x))\big]
+\ +\ \text{(optional overlong reward shaping / filtering terms)}.
+\end{aligned}
+\label{eq:dapo_objective}
+\end{equation}
+DAPO additionally recommends explicit handling of overlong/truncated completions (filtering or reward shaping) to stabilize training
+in long-CoT regimes.
+
+\paragraph{Algorithmic changes (relative to GRPO).}
+DAPO keeps the GRPO outer loop but modifies:
+\begin{itemize}
+  \item \emph{clipping:} use \eqref{eq:dapo_decoupled_clip} instead of symmetric clipping,
+  \item \emph{sampling:} apply dynamic sampling to avoid degenerate (zero-signal) groups,
+  \item \emph{aggregation:} normalize token losses globally (e.g.\ by active tokens) instead of $1/T_i$,
+  \item \emph{reward handling:} optionally filter/shape overlong completions.
+\end{itemize}
+These components are presented as the core practical recipe in the DAPO paper and reference implementations.
+
+
+\subsection{Group Sequence Policy Optimization (GSPO)}
+\label{sec:gspo}
+
+\paragraph{Setup: off-policy optimization and importance sampling.}
+Fix a prompt $x$. Let $\pi_{\theta_{\mathrm{old}}}$ be the behavior policy used to generate rollouts, and let $\pi_\theta$ be the policy being optimized.
+We observe responses $y\sim \pi_{\theta_{\mathrm{old}}}(\cdot\mid x)$ and wish to optimize an objective that (implicitly) concerns expectations under $\pi_\theta(\cdot\mid x)$.
+
+\subsubsection{Token-level vs.\ sequence-level importance ratios as change of measure}
+
+\paragraph{Sequence distribution and exact IS weight.}
+For an autoregressive policy,
+\begin{equation}
+\pi_\theta(y\mid x)=\prod_{t=1}^{|y|}\pi_\theta(y_t\mid x,y_{<t}).
+\end{equation}
+Define the \emph{token ratio}
+\begin{equation}
+r_t(\theta)
+:=\frac{\pi_\theta(y_t\mid x,y_{<t})}{\pi_{\theta_{\mathrm{old}}}(y_t\mid x,y_{<t})},
+\label{eq:token_ratio_gspo}
+\end{equation}
+and the \emph{sequence (trajectory) ratio}, i.e.\ the Radon--Nikodym derivative of $\pi_\theta(\cdot\mid x)$ w.r.t.\ $\pi_{\theta_{\mathrm{old}}}(\cdot\mid x)$:
+\begin{equation}
+w(\theta;y,x)
+:=\frac{\pi_\theta(y\mid x)}{\pi_{\theta_{\mathrm{old}}}(y\mid x)}
+=\prod_{t=1}^{|y|} r_t(\theta).
+\label{eq:seq_ratio_exact}
+\end{equation}
+Then, for any integrable functional $F(x,y)$,
+\begin{equation}
+\E_{y\sim \pi_\theta(\cdot\mid x)}[F(x,y)]
+=
+\E_{y\sim \pi_{\theta_{\mathrm{old}}}(\cdot\mid x)}\!\big[w(\theta;y,x)\,F(x,y)\big].
+\label{eq:is_change_of_measure}
+\end{equation}
+Equation~\eqref{eq:is_change_of_measure} is the basic principle of importance sampling.
+
+\paragraph{Why token ratios are not ``the'' IS correction for sequence-level reward.}
+In group-based LLM RL, the reward and advantage are typically \emph{sequence-level} (one scalar per response).
+GRPO applies \emph{token-level} ratios $r_t(\theta)$ inside a token average, which is not the same as the exact sequence-level IS correction $w(\theta;y,x)=\prod_t r_t(\theta)$ for a sequence-level quantity. GSPO argues this mismatch is a fundamental source of instability and variance accumulation, especially for long responses. 
+
+Concretely, suppose $F(x,y)=\widehat{A}(x,y)$ is a scalar (sequence) advantage. Exact IS gives
+\[
+\E_{\pi_\theta}[\widehat{A}]=\E_{\pi_{\theta_{\mathrm{old}}}}[w(\theta;y,x)\widehat{A}],
+\]
+whereas the GRPO token-weighted surrogate resembles $\E_{\pi_{\theta_{\mathrm{old}}}}\big[\frac{1}{|y|}\sum_t r_t(\theta)\widehat{A}\big]$,
+which is generally \emph{not} equal to the exact IS estimator unless strong special conditions hold.
+
+\paragraph{Variance and scaling.}
+Even the exact ratio $w(\theta;y,x)=\prod_t r_t(\theta)$ can be extremely high-variance for long sequences (product of many random ratios).
+GSPO therefore introduces a length-normalized (geometric mean) ratio:
+\begin{equation}
+s(\theta;y,x)
+:=
+\left(\frac{\pi_\theta(y\mid x)}{\pi_{\theta_{\mathrm{old}}}(y\mid x)}\right)^{\!1/|y|}
+=
+\exp\!\left(\frac{1}{|y|}\sum_{t=1}^{|y|}\log r_t(\theta)\right).
+\label{eq:gspo_len_norm_ratio}
+\end{equation}
+This is exactly the ratio used by GSPO. 
+It places responses of different lengths on a comparable numerical scale and reduces the sensitivity to a few extreme token ratios (since it averages log-ratios).
+
+\subsubsection{GSPO objective (sequence-level clipping, reward alignment)}
+
+\paragraph{Group advantage (sequence-level).}
+For a group of $G$ responses $\{y^{(i)}\}_{i=1}^G$ sampled i.i.d.\ from $\pi_{\theta_{\mathrm{old}}}(\cdot\mid x)$,
+compute rewards $R^{(i)}=R(x,y^{(i)})$ and define the group-normalized advantage
+\begin{equation}
+\widehat{A}^{(i)}
+:=
+\frac{R^{(i)}-\mathrm{mean}\{R^{(j)}\}_{j=1}^G}{\mathrm{std}\{R^{(j)}\}_{j=1}^G}.
+\label{eq:gspo_group_adv}
+\end{equation}
+GSPO uses this sequence-level advantage, matching the fact that the reward is granted to the entire response. 
+
+\paragraph{GSPO surrogate.}
+Let $\epsilon>0$ be the clipping range. With $s^{(i)}(\theta):=s(\theta;y^{(i)},x)$ from \eqref{eq:gspo_len_norm_ratio},
+GSPO maximizes
+\begin{equation}
+J_{\mathrm{GSPO}}(\theta)
+:=
+\E_{x\sim\rho,\ \{y^{(i)}\}_{i=1}^G\sim(\pi_{\theta_{\mathrm{old}}})^G(\cdot\mid x)}
+\left[
+\frac{1}{G}\sum_{i=1}^G
+\min\!\Big(
+s^{(i)}(\theta)\widehat{A}^{(i)},
+\ \mathrm{clip}(s^{(i)}(\theta),1-\epsilon,1+\epsilon)\widehat{A}^{(i)}
+\Big)
+\right].
+\label{eq:gspo_objective}
+\end{equation}
+This is the GSPO objective (sequence-level ratio + sequence-level clipping). 
+
+\subsubsection{Gradient comparison: GSPO vs.\ GRPO (why GSPO is sequence-coherent)}
+
+\paragraph{GSPO gradient (no clipping, for clarity).}
+Omitting clipping for the derivation (as done in the GSPO paper), we have
+\begin{align}
+\nabla_\theta J_{\mathrm{GSPO}}(\theta)
+&=
+\E\left[
+\frac{1}{G}\sum_{i=1}^G
+s^{(i)}(\theta)\widehat{A}^{(i)}\;\nabla_\theta \log s^{(i)}(\theta)
+\right] \\
+&=
+\E\left[
+\frac{1}{G}\sum_{i=1}^G
+s^{(i)}(\theta)\widehat{A}^{(i)}
+\cdot
+\frac{1}{|y^{(i)}|}\sum_{t=1}^{|y^{(i)}|}
+\nabla_\theta \log \pi_\theta\!\big(y^{(i)}_t\mid x,y^{(i)}_{<t}\big)
+\right].
+\label{eq:gspo_grad}
+\end{align}
+This matches the GSPO gradient analysis: \emph{all tokens in the same response share the same scalar weight} $s^{(i)}(\theta)\widehat{A}^{(i)}$ (up to the $1/|y^{(i)}|$ normalization). 
+
+\paragraph{GRPO gradient (no clipping, for comparison).}
+Again omitting clipping, GRPO yields
+\begin{equation}
+\nabla_\theta J_{\mathrm{GRPO}}(\theta)
+=
+\E\left[
+\frac{1}{G}\sum_{i=1}^G
+\widehat{A}^{(i)}\cdot \frac{1}{|y^{(i)}|}\sum_{t=1}^{|y^{(i)}|}
+r^{(i)}_t(\theta)\;
+\nabla_\theta \log \pi_\theta\!\big(y^{(i)}_t\mid x,y^{(i)}_{<t}\big)
+\right],
+\label{eq:grpo_grad_compare}
+\end{equation}
+so token weights vary across positions through $r^{(i)}_t(\theta)$. 
+GSPO emphasizes that these unequal token weights can accumulate unpredictably for long sequences and contribute to collapse, while GSPO avoids this by weighting tokens uniformly within a response. 
+
+\subsubsection{Algorithm (GSPO)}
+
+At iteration $k$:
+\begin{enumerate}
+  \item Freeze behavior policy: $\pi_{\theta_{\mathrm{old}}}\leftarrow \pi_{\theta_k}$.
+  \item Sample prompts $x^{(1)},\dots,x^{(B)}\sim\rho$.
+  \item For each prompt $x^{(b)}$, sample $G$ responses $y^{(b,1)},\dots,y^{(b,G)}\sim\pi_{\theta_{\mathrm{old}}}(\cdot\mid x^{(b)})$.
+  \item Compute rewards $R^{(b,i)}$, advantages $\widehat{A}^{(b,i)}$ via \eqref{eq:gspo_group_adv}, and ratios $s^{(b,i)}(\theta)$ via \eqref{eq:gspo_len_norm_ratio}.
+  \item Perform $E$ epochs of minibatch stochastic gradient ascent on $J_{\mathrm{GSPO}}(\theta)$ in \eqref{eq:gspo_objective}.
+\end{enumerate}
+(Practical note in GSPO: sequence-level likelihoods are less sensitive to token-level precision/routing issues, aiding stability in MoE training. )
+
+
+\subsection{Soft Adaptive Policy Optimization (SAPO)}
+\label{sec:sapo}
+
+\paragraph{Motivation.}
+Hard clipping (as in GRPO/PPO-style objectives) induces a binary trust region: samples outside the clipping band
+contribute \emph{zero} policy gradient, while samples inside contribute fully. This all-or-nothing behavior can be brittle:
+tight clipping discards too much learning signal, whereas loose clipping may admit unstable off-policy updates.
+SAPO replaces hard clipping by a \emph{smooth, adaptive gate} that continuously attenuates gradient contributions as the
+importance ratio deviates from $1$, while preserving the on-policy gradient at $r=1$.
+
+\subsubsection{Setup: group sampling and critic-free advantages}
+
+Fix group size $G\in\N$. For a prompt $x\sim\rho$, sample a group of responses from the behavior policy
+$\pi_{\theta_{\mathrm{old}}}$:
+\begin{equation}
+y^{(1)},\dots,y^{(G)} \overset{i.i.d.}{\sim} \pi_{\theta_{\mathrm{old}}}(\cdot\mid x),
+\qquad
+y^{(i)}=(y^{(i)}_1,\dots,y^{(i)}_{T_i}),
+\quad T_i:=|y^{(i)}|.
+\end{equation}
+Compute sequence-level scores $R^{(i)}:=R(x,y^{(i)})$ and define the group-normalized advantage
+(shared across all tokens in the same response)
+\begin{equation}
+\widehat{A}^{(i)}
+:=
+\frac{R^{(i)}-\bar{R}}{s_R},
+\qquad
+\bar{R}:=\frac{1}{G}\sum_{j=1}^G R^{(j)},
+\qquad
+s_R:=\sqrt{\frac{1}{G}\sum_{j=1}^G\big(R^{(j)}-\bar{R}\big)^2}+\varepsilon,
+\ \varepsilon>0.
+\label{eq:sapo_group_adv}
+\end{equation}
+
+\subsubsection{From GRPO hard clipping to a soft gate}
+
+\paragraph{Token-level ratio.}
+For each token position $t$ in response $y^{(i)}$, define the token-wise importance ratio
+\begin{equation}
+r^{(i)}_{t}(\theta)
+:=
+\frac{\pi_{\theta}\!\big(y^{(i)}_{t}\mid x,y^{(i)}_{<t}\big)}
+     {\pi_{\theta_{\mathrm{old}}}\!\big(y^{(i)}_{t}\mid x,y^{(i)}_{<t}\big)}.
+\label{eq:sapo_ratio}
+\end{equation}
+
+\paragraph{GRPO clipping as a hard gate (binary trust region).}
+A GRPO/PPO-style clipped term at a single token has the form
+\[
+\ell^{\mathrm{CLIP}}(r,\widehat{A})
+=
+\min\Big(r\,\widehat{A},\ \mathrm{clip}(r,1-\epsilon,1+\epsilon)\,\widehat{A}\Big).
+\]
+Its (sub)gradient w.r.t.\ $r$ equals a \emph{binary} gate:
+\begin{equation}
+\frac{\partial}{\partial r}\ell^{\mathrm{CLIP}}(r,\widehat{A})
+=
+g^{\mathrm{hard}}_{\epsilon}(r,\widehat{A})
+:=
+\mathbf{1}\{\widehat{A}>0,\ r\le 1+\epsilon\}
++
+\mathbf{1}\{\widehat{A}\le 0,\ r\ge 1-\epsilon\}.
+\label{eq:sapo_hard_gate}
+\end{equation}
+Thus clipping is equivalent to multiplying the policy-gradient direction by a hard (0/1) gate.
+
+\paragraph{SAPO idea.}
+Replace the hard gate \eqref{eq:sapo_hard_gate} with a \emph{smooth} gate that is close to $1$ when $r\approx 1$
+and decays continuously as $r$ moves away from $1$.
+
+\subsubsection{SAPO objective}
+
+\paragraph{Smooth shaping function.}
+Define a smooth shaping function (applied to ratios)
+\begin{equation}
+f_{i,t}(r)
+:=
+\frac{4}{\tau_{i,t}}\;\sigma\!\big(\tau_{i,t}(r-1)\big),
+\qquad
+\sigma(z):=\frac{1}{1+e^{-z}},
+\qquad
+\tau_{i,t}>0.
+\label{eq:sapo_f}
+\end{equation}
+SAPO uses an advantage-sign dependent temperature:
+\begin{equation}
+\tau_{i,t}
+:=
+\begin{cases}
+\tau_{\mathrm{pos}}, & \widehat{A}^{(i)} > 0,\\
+\tau_{\mathrm{neg}}, & \widehat{A}^{(i)} \le 0.
+\end{cases}
+\label{eq:sapo_tau}
+\end{equation}
+Typically $\tau_{\mathrm{neg}}>\tau_{\mathrm{pos}}$, which attenuates negative-advantage updates more aggressively.
+
+\paragraph{SAPO surrogate (policy part).}
+SAPO maximizes the following critic-free surrogate (policy) objective:
+\begin{equation}
+J_{\mathrm{SAPO}}(\theta)
+:=
+\E_{x\sim\rho}\;
+\E_{\{y^{(i)}\}_{i=1}^G\sim(\pi_{\theta_{\mathrm{old}}})^G(\cdot\mid x)}
+\left[
+\frac{1}{G}\sum_{i=1}^{G}\frac{1}{T_i}\sum_{t=1}^{T_i}
+f_{i,t}\!\big(r^{(i)}_{t}(\theta)\big)\;\widehat{A}^{(i)}
+\right].
+\label{eq:sapo_objective}
+\end{equation}
+
+\paragraph{Optional KL regularization to a reference policy.}
+If a reference policy $\pi_{\mathrm{ref}}$ is used, add the standard penalty
+\[
+-\beta\;\widehat{\E}\left[\sum_{t=1}^{T_i}\log\frac{\pi_\theta(y^{(i)}_t\mid x,y^{(i)}_{<t})}{\pi_{\mathrm{ref}}(y^{(i)}_t\mid x,y^{(i)}_{<t})}\right],
+\]
+to \eqref{eq:sapo_objective}. (We omit it in the derivations below for readability.)
+
+\subsubsection{SAPO gradient and the gate interpretation}
+
+\paragraph{SAPO gate (the additional gradient weight).}
+Differentiate $f_{i,t}(r)$ w.r.t.\ $r$:
+\begin{equation}
+g_{i,t}(\theta)
+:=
+\frac{d}{dr}f_{i,t}(r)\Big|_{r=r^{(i)}_{t}(\theta)}
+=
+4\,\sigma\!\big(\tau_{i,t}(r^{(i)}_{t}(\theta)-1)\big)\Big(1-\sigma\!\big(\tau_{i,t}(r^{(i)}_{t}(\theta)-1)\big)\Big)
+=
+\sech^2\!\Big(\frac{\tau_{i,t}}{2}\,(r^{(i)}_{t}(\theta)-1)\Big).
+\label{eq:sapo_gate_def}
+\end{equation}
+This satisfies $g_{i,t}(\theta)\in(0,1]$ and $g_{i,t}(\theta)=1$ at the on-policy point $r^{(i)}_{t}(\theta)=1$.
+
+\paragraph{Token-level policy-gradient contribution.}
+Using $\nabla_\theta r^{(i)}_{t}(\theta)=r^{(i)}_{t}(\theta)\nabla_\theta\log\pi_\theta(y^{(i)}_t\mid x,y^{(i)}_{<t})$,
+we obtain for each token $(i,t)$:
+\begin{equation}
+\nabla_\theta\Big(f_{i,t}(r^{(i)}_{t}(\theta))\,\widehat{A}^{(i)}\Big)
+=
+\underbrace{g_{i,t}(\theta)}_{\textbf{SAPO gate}}
+\cdot
+\underbrace{r^{(i)}_{t}(\theta)\,\widehat{A}^{(i)}}_{\text{standard IS $\times$ advantage}}
+\cdot
+\nabla_\theta\log\pi_\theta\!\big(y^{(i)}_{t}\mid x,y^{(i)}_{<t}\big).
+\label{eq:sapo_grad_token}
+\end{equation}
+
+\paragraph{Full gradient (policy part).}
+Aggregating over group samples and token positions,
+\begin{equation}
+\nabla_\theta J_{\mathrm{SAPO}}(\theta)
+=
+\E\left[
+\frac{1}{G}\sum_{i=1}^{G}\frac{1}{T_i}\sum_{t=1}^{T_i}
+g_{i,t}(\theta)\;r^{(i)}_{t}(\theta)\;\widehat{A}^{(i)}
+\;\nabla_\theta\log\pi_\theta\!\big(y^{(i)}_{t}\mid x,y^{(i)}_{<t}\big)
+\right].
+\label{eq:sapo_grad_full}
+\end{equation}
+Relative to the unclipped token-ratio objective (which would weight by $r^{(i)}_{t}(\theta)\widehat{A}^{(i)}$),
+SAPO inserts the extra multiplicative gate $g_{i,t}(\theta)$.
+
+\subsubsection{Algorithm (SAPO)}
+
+Fix hyperparameters: group size $G$, temperatures $(\tau_{\mathrm{pos}},\tau_{\mathrm{neg}})$, and (optionally) KL coefficient $\beta$.
+
+At iteration $k$:
+\begin{enumerate}
+  \item \textbf{Freeze behavior policy:} set $\theta_{\mathrm{old}}\leftarrow \theta_k$.
+  \item \textbf{Sample prompts:} draw $x^{(1)},\dots,x^{(B)}\sim\rho$.
+  \item \textbf{Group rollouts:} for each $x^{(b)}$, sample $G$ responses
+  $y^{(b,1)},\dots,y^{(b,G)}\sim\pi_{\theta_{\mathrm{old}}}(\cdot\mid x^{(b)})$.
+  \item \textbf{Compute group advantages:} compute rewards $R^{(b,i)}=R(x^{(b)},y^{(b,i)})$ and
+  advantages $\widehat{A}^{(b,i)}$ via \eqref{eq:sapo_group_adv}.
+  \item \textbf{Optimize:} for $E$ epochs, perform minibatch stochastic gradient ascent on $J_{\mathrm{SAPO}}(\theta)$:
+  for each token compute $r^{(b,i)}_{t}(\theta)$ via \eqref{eq:sapo_ratio},
+  set $\tau_{b,i,t}$ via \eqref{eq:sapo_tau}, compute the gate $g_{b,i,t}(\theta)$ via \eqref{eq:sapo_gate_def},
+  and update $\theta$ using the gradient form \eqref{eq:sapo_grad_full}
+  (plus the gradient of the KL regularizer if included).
+  \item \textbf{Commit:} set $\theta_{k+1}\leftarrow \theta$.
+\end{enumerate}
+
+
+\end{document}

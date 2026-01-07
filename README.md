@@ -10,31 +10,6 @@ This repository contains a 12-lesson course that builds the mathematical foundat
 
 ---
 
-## Repository layout
-
-```
-/
-  README.md
-  materials/
-    book/
-      src.tex         # LaTeX source (draft book)
-      LLM_alignment_book.pdf # rendered PDF (optional, but recommended)
-    references/       # papers, blog posts, extra notes (optional)
-  lesson_01/
-    README.md         # lesson page (objectives + outline + reading)
-    slides/           # slides for the lesson
-    conspect.md       # concise notes / “конспект”
-  ...
-  lesson_12/
-```
-
-### Conventions (recommended)
-- Slides live at: `lesson_XX/slides/slides.pdf` (or `slides.pptx`)
-- Notes live at: `lesson_XX/conspect.md`
-- Each lesson folder can optionally include `exercises/`, `notebooks/`, `homework/`, `reading/`.
-
----
-
 ## Course roadmap
 
 | Lesson number | Lesson Name | Lesson Description | Link to slides | Link to conspect |
@@ -42,7 +17,7 @@ This repository contains a 12-lesson course that builds the mathematical foundat
 | 1 | [ML foundations for alignment](lesson_01/README.md) | Supervised learning setup, loss functions, train/val/test, generalization intuition, basic optimization (SGD), probabilistic notation used throughout the course. | [Slides](lesson_01/slides/) | [Conspect](lesson_01/conspect.md) |
 | 2 | [Deep Learning essentials](lesson_02/README.md) | Neural networks, backprop, initialization, regularization, normalization, scaling laws intuition (high-level), why gradients/variance matter for RL later. | [Slides](lesson_02/slides/) | [Conspect](lesson_02/conspect.md) |
 | 3 | [Sequence modeling + Transformers](lesson_03/README.md) | Autoregressive modeling, cross-entropy objective, attention/transformers, tokenization, decoding/sampling basics needed to view LLMs as policies. | [Slides](lesson_03/slides/) | [Conspect](lesson_03/conspect.md) |
-| 4 | [LLM training pipeline overview](lesson_04/README.md) | Pretraining -> SFT -> preference data/reward modeling -> RL fine-tuning; where KL regularization appears; alignment failure modes motivating RL. | [Slides](lesson_04/slides/) | [Conspect](lesson_04/conspect.md) |
+| 4 | [LLM training pipeline overview](lesson_04/README.md) | Pretraining -> SFT -> preference data/reward modeling -> RL Alignment techniques; Reward Design for preference data; alignment failure modes motivating RL. | [Slides](lesson_04/slides/) | [Conspect](lesson_04/conspect.md) |
 | 5 | [RL fundamentals](lesson_05/README.md) | Probability/expectation review, Monte Carlo estimation, importance sampling basics, MDPs, trajectories, returns, discounted occupancy, value functions, TD idea. | [Slides](lesson_05/slides/) | [Conspect](lesson_05/conspect.md) |
 | 6 | [Policy Gradient methods](lesson_06/README.md) | Log-derivative trick, REINFORCE, reward-to-go, baselines/control variates, actor-critic (A2C/A3C), advantage estimation as variance reduction. | [Slides](lesson_06/slides/) | [Conspect](lesson_06/conspect.md) |
 | 7 | [Bounded optimization methods](lesson_07/README.md) | Performance Difference Lemma, local surrogate objective, distribution shift penalty, conservative policy updates (CPI), trust regions and KL constraints, TRPO mechanics. | [Slides](lesson_07/slides/) | [Conspect](lesson_07/conspect.md) |

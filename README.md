@@ -1,6 +1,6 @@
 # Mathematical Fundamentals of Reinforcement Learning for LLM Alignment
 
-This repository contains a 12-lesson course that builds the mathematical foundations needed to understand and implement modern reinforcement-learning-based alignment methods for large language models (LLMs).
+This repository contains a 12-lesson course that builds the mathematical foundations needed to understand and implement modern reinforcement-learning-based alignment methods for large language models (LLMs). авыа
 
 **High-level flow**
 - **Lessons 1–4:** Intro to ML, DL, and LLMs (enough to understand where RL/alignment fits and what the “policy” is).

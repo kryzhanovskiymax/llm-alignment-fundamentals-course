@@ -1,57 +1,57 @@
-# Mathematical Fundamentals of Reinforcement Learning for LLM Alignment
+# Математические основы обучения с подкреплением для выравнивания больших языковых моделей
 
-This repository contains a 12-lesson course that builds the mathematical foundations needed to understand and implement modern reinforcement-learning-based alignment methods for large language models (LLMs).
+Этот репозиторий содержит курс из 12 уроков, который закладывает математический фундамент, необходимый для понимания и реализации современных методов выравнивания больших языковых моделей (LLM) на основе обучения с подкреплением.
 
-**High-level flow**
-- **Lessons 1–4:** Intro to ML, DL, and LLMs (enough to understand where RL/alignment fits and what the “policy” is).
-- **Lessons 5–8:** Core mathematical RL + policy optimization, culminating in modern alignment methods (these lessons track the included book draft).
-- **Lessons 9–10:** Practical aspects: tooling/systems and evaluation/benchmarks.
-- **Lessons 11–12:** Reading group sessions (topics chosen dynamically).
+**Общая структура**
+- **Уроки 1–4:** Введение в ML, DL и LLM (достаточно для понимания, где применяется RL/alignment и что такое "политика").
+- **Уроки 5–8:** Основная математическая база RL + оптимизация политики, доминирующая в современных методах alignment'a (эти уроки соответствуют прилагаемому черновику книги).
+- **Уроки 9–10:** Практические аспекты: инструменты/системы и оценка/бенчмарки.
+- **Уроки 11–12:** Сессии reading group (темы выбираются динамически).
 
 ---
 
-## Course roadmap
+## Роадмап курса
 
-| Lesson number | Lesson Name | Lesson Description | Link to slides | Link to conspect |
+| Номер урока | Название урока | Описание урока | Ссылка на слайды | Ссылка на конспект |
 |---:|---|---|---|---|
-| 1 | [ML foundations for alignment](lesson_01/README.md) | Supervised learning setup, loss functions, train/val/test, generalization intuition, basic optimization (SGD), probabilistic notation used throughout the course. | [Slides](lesson_01/slides/) | [Conspect](lesson_01/conspect.md) |
-| 2 | [Deep Learning essentials](lesson_02/README.md) | Neural networks, backprop, initialization, regularization, normalization, scaling laws intuition (high-level), why gradients/variance matter for RL later. | [Slides](lesson_02/slides/) | [Conspect](lesson_02/conspect.md) |
-| 3 | [Sequence modeling + Transformers](lesson_03/README.md) | Autoregressive modeling, cross-entropy objective, attention/transformers, tokenization, decoding/sampling basics needed to view LLMs as policies. | [Slides](lesson_03/slides/) | [Conspect](lesson_03/conspect.md) |
-| 4 | [LLM training pipeline overview](lesson_04/README.md) | Pretraining -> SFT -> preference data/reward modeling -> RL Alignment techniques; Reward Design for preference data; alignment failure modes motivating RL. | [Slides](lesson_04/slides/) | [Conspect](lesson_04/conspect.md) |
-| 5 | [RL fundamentals](lesson_05/README.md) | Probability/expectation review, Monte Carlo estimation, importance sampling basics, MDPs, trajectories, returns, discounted occupancy, value functions, TD idea. | [Slides](lesson_05/slides/) | [Conspect](lesson_05/conspect.md) |
-| 6 | [Policy Gradient methods](lesson_06/README.md) | Log-derivative trick, REINFORCE, reward-to-go, baselines/control variates, actor-critic (A2C/A3C), advantage estimation as variance reduction. | [Slides](lesson_06/slides/) | [Conspect](lesson_06/conspect.md) |
-| 7 | [Bounded optimization methods](lesson_07/README.md) | Performance Difference Lemma, local surrogate objective, distribution shift penalty, conservative policy updates (CPI), trust regions and KL constraints, TRPO mechanics. | [Slides](lesson_07/slides/) | [Conspect](lesson_07/conspect.md) |
-| 8 | [Effective modern alignment methods](lesson_08/README.md) | LLM-as-MDP formalization (tokens/actions), KL-regularized objectives vs reference model, PPO-style clipping, critic-free/group baselines, GRPO + variants (DrGRPO/DAPO), sequence-level alternatives (GSPO), soft gating (SAPO). | [Slides](lesson_08/slides/) | [Conspect](lesson_08/conspect.md) |
-| 9 | [Practical alignment tooling & systems](lesson_09/README.md) | Practical pipeline: data -> sampling -> scoring/reward -> optimization; common tooling patterns (training loops, rollout engines like vLLM, distributed execution, LoRA/PEFT), logging/monitoring, reproducibility. | [Slides](lesson_09/slides/) | [Conspect](lesson_09/conspect.md) |
-| 10 | [Benchmarks & evaluation for aligned LLMs](lesson_10/README.md) | Offline eval vs online, automatic vs human eval, benchmark types (instruction-following, safety, reasoning), preference-model validation, reward hacking checks, regression testing. | [Slides](lesson_10/slides/) | [Conspect](lesson_10/conspect.md) |
-| 11 | [Reading Group I](lesson_11/README.md) | (Reading group session; papers/topics TBD.) | [Slides](lesson_11/slides/) | [Conspect](lesson_11/conspect.md) |
-| 12 | [Reading Group II](lesson_12/README.md) | (Reading group session; papers/topics TBD.) | [Slides](lesson_12/slides/) | [Conspect](lesson_12/conspect.md) |
+| 1 | [Основы ML для alignment'a](lesson_01/README.md) | Настройка обучения с учителем, функции потерь, train/val/test, интуиция обобщения, базовая оптимизация (SGD), вероятностное обоснование, используемого в курсе. | [Слайды](lesson_01/slides/) | [Конспект](lesson_01/conspect.md) |
+| 2 | [Основы глубокого обучения](lesson_02/README.md) | Нейронные сети, обратное распространение, инициализация, регуляризация, нормализация, интуиция законов масштабирования (высокий уровень), почему градиенты/дисперсия важны для RL. | [Слайды](lesson_02/slides/) | [Конспект](lesson_02/conspect.md) |
+| 3 | [Моделирование последовательностей + трансформеры](lesson_03/README.md) | Авторегрессивное моделирование, целевая функция кросс-энтропии, attention/трансформеры, токенизация, основы декодирования/сэмплирования, необходимые для представления LLM как политик. | [Слайды](lesson_03/slides/) | [Конспект](lesson_03/conspect.md) |
+| 4 | [Обзор pipeline обучения LLM](lesson_04/README.md) | Предобучение -> SFT -> данные предпочтений/моделирование вознаграждений -> техники RL-alignment'a; дизайн вознаграждений для данных предпочтений; проблемы alignment и почему они требуют применения RL. | [Слайды](lesson_04/slides/) | [Конспект](lesson_04/conspect.md) |
+| 5 | [Основы RL](lesson_05/README.md) | Обзор вероятности/ожидания, оценка Монте-Карло, основы importance sampling, MDP, траектории, returns, дисконтированная occupancy, функции ценности, идея TD. | [Слайды](lesson_05/slides/) | [Конспект](lesson_05/conspect.md) |
+| 6 | [Методы градиента политики](lesson_06/README.md) | Трюк с логарифмической производной, REINFORCE, reward-to-go, baselines/контрольные вариаты, actor-critic (A2C/A3C), оценка advantage как снижение дисперсии. | [Слайды](lesson_06/slides/) | [Конспект](lesson_06/conspect.md) |
+| 7 | [Методы ограниченной оптимизации](lesson_07/README.md) | Лемма о разности производительности, локальная суррогатная целевая функция, штраф за сдвиг распределения, консервативные обновления политики (CPI), доверительные области и ограничения KL, механика TRPO. | [Слайды](lesson_07/slides/) | [Конспект](lesson_07/conspect.md) |
+| 8 | [Эффективные современные методы выравнивания](lesson_08/README.md) | Формализация LLM-как-MDP (токены/действия), целевые функции с KL-регуляризацией vs референсная модель, клиппинг в стиле PPO, baseline без критика/групповые baselines, GRPO + варианты (DrGRPO/DAPO), альтернативы на уровне последовательности (GSPO), мягкое гейтирование (SAPO). | [Слайды](lesson_08/slides/) | [Конспект](lesson_08/conspect.md) |
+| 9 | [Практические инструменты и системы выравнивания](lesson_09/README.md) | Практический pipeline: данные -> сэмплирование -> оценка/вознаграждение -> оптимизация; общие паттерны инструментов (циклы обучения, движки rollout типа vLLM, распределенное выполнение, LoRA/PEFT), логирование/мониторинг, воспроизводимость. | [Слайды](lesson_09/slides/) | [Конспект](lesson_09/conspect.md) |
+| 10 | [Бенчмарки и оценка для выровненных LLM](lesson_10/README.md) | Offline eval vs online, автоматическая vs человеческая оценка, типы бенчмарков (следование инструкциям, безопасность, рассуждения), валидация моделей предпочтений, проверки на взлом вознаграждений, регрессионное тестирование. | [Слайды](lesson_10/slides/) | [Конспект](lesson_10/conspect.md) |
+| 11 | [Reading Group I](lesson_11/README.md) | (Сессия reading group; статьи/темы будут определены позже.) | [Слайды](lesson_11/slides/) | [Конспект](lesson_11/conspect.md) |
+| 12 | [Reading Group II](lesson_12/README.md) | (Сессия reading group; статьи/темы будут определены позже.) | [Слайды](lesson_12/slides/) | [Конспект](lesson_12/conspect.md) |
 
 ---
 
-## Book sources (Lessons 5–8)
+## Исходники книги (Уроки 5–8)
 
-The draft book *“RL Foundations for LLM Alignment”* is stored in:
+Черновик книги *"RL Foundations for LLM Alignment"* находится в:
 
-- `materials/book/src.tex` — LaTeX source
-- `materials/book/LLM_alignment_book.pdf` — compiled PDF (optional but recommended)
+- `materials/book/src.tex` — исходник LaTeX
+- `materials/book/LLM_alignment_book.pdf` — скомпилированный PDF (опционально, но рекомендуется)
 
-Lessons **5–8** are designed to match the book chapters:
-- **L5:** core probability + RL fundamentals
-- **L6:** policy gradients and actor–critic
-- **L7:** bounded optimization (CPI/TRPO/PPO theory)
-- **L8:** modern LLM alignment methods (PPO/GRPO-style and beyond)
+Уроки **5–8** разработаны в соответствии с главами книги:
+- **L5:** основы теории вероятностей + основы RL
+- **L6:** градиенты политики и actor–critic
+- **L7:** ограниченная оптимизация (теория CPI/TRPO/PPO)
+- **L8:** современные методы выравнивания LLM (в стиле PPO/GRPO и дальше)
 
 ---
 
-## Suggested “minimum deliverables” per lesson folder
+## Рекомендуемые "минимальные требования" для каждой папки урока
 
-Each `lesson_XX/` should ideally contain:
-- `README.md` (objectives, outline, reading, homework)
+Каждая папка `lesson_XX/` в идеале должна содержать:
+- `README.md` (цели, план, чтение, домашнее задание)
 - `slides/`
-- `conspect.md` (the compact mathematical notes)
+- `conspect.md` (компактные математические заметки)
 
-Optional:
-- `exercises/` (problem sets)
-- `notebooks/` (implementation demos)
-- `reading/` (paper list + annotations)
+Опционально:
+- `exercises/` (наборы задач)
+- `notebooks/` (демонстрационные реализации)
+- `reading/` (список статей + аннотации)
